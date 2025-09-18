@@ -153,6 +153,31 @@ async function run() {
     });
 
 
+    // create a post, authorEmail, authorName
+    app.post('/posts', upload.single('image'), async (req, res) => {
+      try {
+        const { authorEmail, authorName, text } = req.body;
+        if (!authorEmail) return res.status(400).json({ error: "authorEmail required" });
+
+        const postDoc = {
+          authorEmail,
+          authorName: authorName || "",
+          text: text || "",
+          image: req.file ? { data: req.file.buffer.toString('base64'), mimetype: req.file.mimetype } : null,
+          likes: [],
+          comments: [],
+          createdAt: new Date()
+        };
+
+        const result = await postsCollection.insertOne(postDoc);
+        res.json({ insertedId: result.insertedId });
+      } catch (err) {
+        console.error("POST /posts", err);
+        res.status(500).json({ error: "Server error" });
+      }
+    });
+
+
 
 
 //    app.post('/socialPost', upload.single('photo'), async (req, res) => {
