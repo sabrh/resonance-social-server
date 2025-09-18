@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const multer = require('multer');
 const app = express();
 require('dotenv').config();
 const port = process.env.PORT || 3000;
@@ -7,6 +8,10 @@ const { MongoClient, ServerApiVersion } = require('mongodb');
 
 app.use(cors());
 app.use(express.json());
+
+// Multer setup (memory storage for now)
+const storage = multer.memoryStorage(); // file stored in memory buffer
+const upload = multer({ storage: storage });
 
 app.get('/',(req,res)=> {
     res.send("Resonance server is working")
@@ -39,8 +44,39 @@ async function run() {
     // Send a ping to confirm a successful connection
     // await client.db("admin").command({ ping: 1 });
 
+// post collection
+    const collectionPost = client.db('createPostDB').collection('createPost');
+
+   app.post('/socialPost', upload.single('photo'), async (req, res) => {
+  const text = req.body.text;      // text field
+  const file = req.file;           // uploaded image
+
+  const newQuery = {
+    text,
+    image: file ? file.buffer.toString('base64') : null,
+    filename: file?.originalname,
+    mimetype: file?.mimetype
+  };
+
+  
+  const result = await collectionPost.insertOne(newQuery);
+  res.send({ success: true, insertedId: result.insertedId });
+});
 
 
+
+
+app.get('/socialPost', async (req, res) => {
+  try {
+    
+
+    const posts = await collectionPost.find({}).toArray(); // get all documents
+    res.send(posts); // send JSON array
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ error: 'Failed to fetch posts' });
+  }
+});
 
 
 
@@ -50,7 +86,7 @@ async function run() {
 
 
 
-    
+
     // Ensures that the client will close when you finish/error
     // await client.close();
   }
