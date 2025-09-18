@@ -13,10 +13,10 @@ app.use(express.json());
 const storage = multer.memoryStorage(); // file stored in memory buffer
 const upload = multer({ storage: storage });
 
-app.get('/',(req,res)=> {
+app.get('/', (req, res) => {
     res.send("Resonance server is working")
 });
-app.listen(port, ()=> {
+app.listen(port, () => {
     console.log(`server is running on port ${port}`);
 });
 
@@ -30,66 +30,66 @@ const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  }
+    serverApi: {
+        version: ServerApiVersion.v1,
+        strict: true,
+        deprecationErrors: true,
+    }
 });
 
 async function run() {
-  try {
-    // Connect the client to the server	(optional starting in v4.7)
-    // await client.connect();
-    // Send a ping to confirm a successful connection
-    // await client.db("admin").command({ ping: 1 });
+    try {
+        // Connect the client to the server	(optional starting in v4.7)
+        // await client.connect();
+        // Send a ping to confirm a successful connection
+        // await client.db("admin").command({ ping: 1 });
 
-// post collection
-    const collectionPost = client.db('createPostDB').collection('createPost');
+        // post collection
+        const collectionPost = client.db('createPostDB').collection('createPost');
 
-   app.post('/socialPost', upload.single('photo'), async (req, res) => {
-  const text = req.body.text;      // text field
-  const file = req.file;           // uploaded image
+        app.post('/socialPost', upload.single('photo'), async (req, res) => {
+            const text = req.body.text;      // text field
+            const file = req.file;           // uploaded image
 
-  const newQuery = {
-    text,
-    image: file ? file.buffer.toString('base64') : null,
-    filename: file?.originalname,
-    mimetype: file?.mimetype
-  };
-
-  
-  const result = await collectionPost.insertOne(newQuery);
-  res.send({ success: true, insertedId: result.insertedId });
-});
+            const newQuery = {
+                text,
+                image: file ? file.buffer.toString('base64') : null,
+                filename: file?.originalname,
+                mimetype: file?.mimetype
+            };
 
 
-
-
-app.get('/socialPost', async (req, res) => {
-  try {
-    
-
-    const posts = await collectionPost.find({}).toArray(); // get all documents
-    res.send(posts); // send JSON array
-  } catch (err) {
-    console.error(err);
-    res.status(500).send({ error: 'Failed to fetch posts' });
-  }
-});
-
-
-
-    console.log("Pinged your deployment. You successfully connected to MongoDB!");
-  } finally {
+            const result = await collectionPost.insertOne(newQuery);
+            res.send({ success: true, insertedId: result.insertedId });
+        });
 
 
 
 
+        app.get('/socialPost', async (req, res) => {
+            try {
 
-    // Ensures that the client will close when you finish/error
-    // await client.close();
-  }
+
+                const posts = await collectionPost.find({}).toArray(); // get all documents
+                res.send(posts); // send JSON array
+            } catch (err) {
+                console.error(err);
+                res.status(500).send({ error: 'Failed to fetch posts' });
+            }
+        });
+
+
+
+        console.log("Pinged your deployment. You successfully connected to MongoDB!");
+    } finally {
+
+        // Testing text
+
+
+
+        // Ensures that the client will close when you finish/error
+        // await client.close();
+    }
 }
 run().catch(console.dir);
 
