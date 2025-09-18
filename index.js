@@ -76,6 +76,29 @@ async function run() {
     });
 
 
+    // Update user profile 
+     app.put('/users/:email', upload.single('photo'), async (req, res) => {
+      try {
+        const email = req.params.email;
+        const { name } = req.body;
+        let updateDoc = { $set: { name } };
+
+        if (req.file) {
+          updateDoc.$set.image = req.file.buffer.toString("base64");
+        }
+
+        const result = await usersCollection.updateOne(
+          { email },
+          updateDoc,
+          { upsert: true }
+        );
+        res.send(result);
+      } catch (err) {
+        res.status(500).send({ error: "Failed to update profile" });
+      }
+    });
+
+
    app.post('/socialPost', upload.single('photo'), async (req, res) => {
   const text = req.body.text;      // text field
   const file = req.file;           // uploaded image
