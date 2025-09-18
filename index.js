@@ -177,6 +177,28 @@ async function run() {
       }
     });
 
+    // Get posts by user (email)
+     app.get('/posts/:email', async (req, res) => {
+      try {
+        const email = req.params.email;
+        const posts = await postsCollection.find({ authorEmail: email }).sort({ createdAt: -1 }).toArray();
+        res.json(posts);
+      } catch (err) {
+        console.error("GET /posts/:email", err);
+        res.status(500).json({ error: "Server error" });
+      }
+    });
+
+    // Get all posts (feed)
+     app.get('/posts', async (req, res) => {
+      try {
+        const posts = await postsCollection.find({}).sort({ createdAt: -1 }).toArray();
+        res.json(posts);
+      } catch (err) {
+        console.error("GET /posts", err);
+        res.status(500).json({ error: "Server error" });
+      }
+    });
 
 
 
