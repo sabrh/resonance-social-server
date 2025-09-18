@@ -23,10 +23,9 @@ app.listen(port, ()=> {
 
 
 // Connection to MongoDB 
-
-
-
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.qk8emwu.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
+
+// const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.uwapymk.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
@@ -40,12 +39,31 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
-    // await client.connect();
+    await client.connect();
     // Send a ping to confirm a successful connection
     // await client.db("admin").command({ ping: 1 });
 
 // post collection
     const collectionPost = client.db('createPostDB').collection('createPost');
+    const usersCollection = client.db('createPostDB').collection('users');
+
+
+
+    // save new user after signup
+    app.post('/users', async (req, res) => {
+      try {
+        const user = req.body; // { name, email, image }
+        const existingUser = await usersCollection.findOne({ email: user.email });
+        if (existingUser) {
+          return res.send({ message: "User already exists" });
+        }
+        const result = await usersCollection.insertOne(user);
+        res.send(result);
+      } catch (err) {
+        res.status(500).send({ error: "Failed to save user" });
+      }
+    });
+
 
    app.post('/socialPost', upload.single('photo'), async (req, res) => {
   const text = req.body.text;      // text field
@@ -77,6 +95,9 @@ app.get('/socialPost', async (req, res) => {
     res.status(500).send({ error: 'Failed to fetch posts' });
   }
 });
+
+
+
 
 
 
