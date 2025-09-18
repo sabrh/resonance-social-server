@@ -129,43 +129,61 @@ async function run() {
 
 
     // Follow and Unfollow 
-    
+
+     app.patch('/users/:email/follow', async (req, res) => {
+      try {
+        const targetEmail = req.params.email; // user to be followed/unfollowed
+        const { action, by } = req.body; // 'by' is the follower's email
+
+        if (!by || !action) return res.status(400).json({ error: "Missing action or by" });
+
+        if (action === 'follow') {
+          await usersCollection.updateOne({ email: targetEmail }, { $addToSet: { followers: by } }, { upsert: true });
+          await usersCollection.updateOne({ email: by }, { $addToSet: { following: targetEmail } }, { upsert: true });
+          return res.json({ status: "followed" });
+        } else {
+          await usersCollection.updateOne({ email: targetEmail }, { $pull: { followers: by } });
+          await usersCollection.updateOne({ email: by }, { $pull: { following: targetEmail } });
+          return res.json({ status: "unfollowed" });
+        }
+      } catch (err) {
+        console.error("PATCH /users/:email/follow", err);
+        res.status(500).json({ error: "Server error" });
+      }
+    });
 
 
 
-   app.post('/socialPost', upload.single('photo'), async (req, res) => {
-  const text = req.body.text;      // text field
-  const file = req.file;           // uploaded image
 
-  const newQuery = {
-    text,
-    image: file ? file.buffer.toString('base64') : null,
-    filename: file?.originalname,
-    mimetype: file?.mimetype
-  };
+//    app.post('/socialPost', upload.single('photo'), async (req, res) => {
+//   const text = req.body.text;      // text field
+//   const file = req.file;           // uploaded image
+
+//   const newQuery = {
+//     text,
+//     image: file ? file.buffer.toString('base64') : null,
+//     filename: file?.originalname,
+//     mimetype: file?.mimetype
+//   };
 
   
-  const result = await collectionPost.insertOne(newQuery);
-  res.send({ success: true, insertedId: result.insertedId });
-});
+//   const result = await collectionPost.insertOne(newQuery);
+//   res.send({ success: true, insertedId: result.insertedId });
+// });
 
 
 
-
-
-
-
-app.get('/socialPost', async (req, res) => {
-  try {
+// app.get('/socialPost', async (req, res) => {
+//   try {
     
 
-    const posts = await collectionPost.find({}).toArray(); // get all documents
-    res.send(posts); // send JSON array
-  } catch (err) {
-    console.error(err);
-    res.status(500).send({ error: 'Failed to fetch posts' });
-  }
-});
+//     const posts = await collectionPost.find({}).toArray(); // get all documents
+//     res.send(posts); // send JSON array
+//   } catch (err) {
+//     console.error(err);
+//     res.status(500).send({ error: 'Failed to fetch posts' });
+//   }
+// });
 
 
 
