@@ -11,7 +11,15 @@ app.use(express.json());
 
 // Multer setup (memory storage for now)
 const storage = multer.memoryStorage(); // file stored in memory buffer
-const upload = multer({ storage: storage });
+const upload = multer({ 
+    storage,
+  fileFilter: (req, file, cb) => {
+    if (!file) return cb(null, true);
+    if (file.mimetype.startsWith("image/")) cb(null, true);
+    else cb(new Error("Only image files allowed"), false);
+  },
+  limits: { fileSize: 5 * 1024 * 1024 } // 5MB
+ });
 
 app.get('/',(req,res)=> {
     res.send("Resonance server is working")
@@ -19,6 +27,8 @@ app.get('/',(req,res)=> {
 app.listen(port, ()=> {
     console.log(`server is running on port ${port}`);
 });
+
+
 
 
 
@@ -50,17 +60,36 @@ async function run() {
 
 
     // save new user after signup
-    app.post('/users', async (req, res) => {
+       app.post('/users', async (req, res) => {
       try {
-        const user = req.body; // { name, email, image }
-        const existingUser = await usersCollection.findOne({ email: user.email });
-        if (existingUser) {
-          return res.send({ message: "User already exists" });
-        }
-        const result = await usersCollection.insertOne(user);
-        res.send(result);
+        const { email, name, displayName, photoURL, location, education, gender, about } = req.body;
+        if (!email) return res.status(400).json({ error: "Email is required" });
+
+        const updateDoc = {
+          $setOnInsert: { createdAt: new Date() },
+          $set: {
+            email,
+            name: name || displayName || "",
+            displayName: displayName || name || "",
+            photo: photoURL || null,
+            banner: null,
+            bio: {
+              location: location || null,
+              education: education || null,
+              gender: gender || null,
+              about: about || null
+            }
+          },
+          $setOnInsert2: {} // placeholder
+        };
+
+        // upsert user (insert if not exists)
+        await usersCollection.updateOne({ email }, updateDoc, { upsert: true });
+        const user = await usersCollection.findOne({ email });
+        res.json(user);
       } catch (err) {
-        res.status(500).send({ error: "Failed to save user" });
+        console.error("POST /users error:", err);
+        res.status(500).json({ error: "Server error" });
       }
     });
 
