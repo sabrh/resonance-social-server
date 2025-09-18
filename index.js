@@ -64,6 +64,17 @@ async function run() {
       }
     });
 
+    //Get user by email 
+    app.get('/users/:email', async (req, res) => {
+      try {
+        const email = req.params.email;
+        const user = await usersCollection.findOne({ email });
+        res.send(user);
+      } catch (err) {
+        res.status(500).send({ error: "Failed to fetch user" });
+      }
+    });
+
 
    app.post('/socialPost', upload.single('photo'), async (req, res) => {
   const text = req.body.text;      // text field
