@@ -93,17 +93,39 @@ async function run() {
       }
     });
 
-    //Get user by email 
-    app.get('/users/:email', async (req, res) => {
+    //Get user by bio, profile, photo and banner 
+    app.put('/users/:email', upload.fields([{ name: 'photo' }, { name: 'banner' }]), async (req, res) => {
       try {
         const email = req.params.email;
+        const { name, location, education, gender, about } = req.body;
+
+        const setFields = {};
+        if (name) setFields.displayName = name;
+        setFields['bio'] = {
+          location: location || null,
+          education: education || null,
+          gender: gender || null,
+          about: about || null
+        };
+
+        if (req.files?.photo && req.files.photo[0]) {
+          setFields.photo = req.files.photo[0].buffer.toString('base64');
+          setFields.photoMimetype = req.files.photo[0].mimetype;
+        }
+
+        if (req.files?.banner && req.files.banner[0]) {
+          setFields.banner = req.files.banner[0].buffer.toString('base64');
+          setFields.bannerMimetype = req.files.banner[0].mimetype;
+        }
+
+        await usersCollection.updateOne({ email }, { $set: setFields }, { upsert: true });
         const user = await usersCollection.findOne({ email });
-        res.send(user);
+        res.json(user);
       } catch (err) {
-        res.status(500).send({ error: "Failed to fetch user" });
+        console.error("PUT /users/:email", err);
+        res.status(500).json({ error: "Server error" });
       }
     });
-
 
     // Update user profile 
      app.put('/users/:email', upload.single('photo'), async (req, res) => {
