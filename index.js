@@ -127,27 +127,10 @@ async function run() {
       }
     });
 
-    // Update user profile 
-     app.put('/users/:email', upload.single('photo'), async (req, res) => {
-      try {
-        const email = req.params.email;
-        const { name } = req.body;
-        let updateDoc = { $set: { name } };
 
-        if (req.file) {
-          updateDoc.$set.image = req.file.buffer.toString("base64");
-        }
+    // Follow and Unfollow 
+    
 
-        const result = await usersCollection.updateOne(
-          { email },
-          updateDoc,
-          { upsert: true }
-        );
-        res.send(result);
-      } catch (err) {
-        res.status(500).send({ error: "Failed to update profile" });
-      }
-    });
 
 
    app.post('/socialPost', upload.single('photo'), async (req, res) => {
@@ -165,6 +148,9 @@ async function run() {
   const result = await collectionPost.insertOne(newQuery);
   res.send({ success: true, insertedId: result.insertedId });
 });
+
+
+
 
 
 
