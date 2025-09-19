@@ -70,6 +70,14 @@ async function run() {
       }
     });
 
+    // get user by uid
+    app.get("/users/:uid", async (req, res) => {
+      const uid = req.params.uid;
+      const user = await collectionUsers.findOne({ uid });
+      if (!user) return res.status(404).send({ error: "User not found" });
+      res.send(user);
+    });
+
     app.post("/socialPost", upload.single("photo"), async (req, res) => {
       const text = req.body.text; // text field
       const file = req.file; // uploaded image
