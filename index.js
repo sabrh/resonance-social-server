@@ -78,6 +78,37 @@ async function run() {
       res.send(user);
     });
 
+    // upload / update banner (form-data; field name "banner")
+    app.post(
+      "/users/:uid/banner",
+      upload.single("banner"),
+      async (req, res) => {
+        try {
+          const uid = req.params.uid;
+          const file = req.file;
+          if (!file) return res.status(400).send({ error: "No file uploaded" });
+
+          const bannerBase64 = file.buffer.toString("base64");
+          const update = {
+            banner: bannerBase64,
+            bannerFilename: file.originalname,
+            bannerMimetype: file.mimetype,
+            updatedAt: new Date(),
+          };
+
+          await collectionUsers.updateOne(
+            { uid },
+            { $set: update },
+            { upsert: true }
+          );
+          res.send({ success: true });
+        } catch (err) {
+          console.error(err);
+          res.status(500).send({ error: "upload failed" });
+        }
+      }
+    );
+
     app.post("/socialPost", upload.single("photo"), async (req, res) => {
       const text = req.body.text; // text field
       const file = req.file; // uploaded image
