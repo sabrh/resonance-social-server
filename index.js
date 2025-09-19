@@ -86,6 +86,34 @@ async function run() {
       }
     });
 
+    // Add a comment
+    app.post("/socialPost/:id/comments", async (req, res) => {
+      const postId = req.params.id;
+      const { userId, text } = req.body;
+      
+
+      console.log("PostId:", postId);
+      console.log("Body:", req.body);
+
+      try {
+        const newComment = {
+          _id: new ObjectId(),
+          authorName: userId || "Unknown",
+          text,
+          createdAt: new Date(),
+        };
+
+        await collectionPost.updateOne(
+          { _id: new ObjectId(postId) },
+          { $push: { comments: newComment } }
+        );
+
+        res.status(201).send({ comment: newComment });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to add comment" });
+      }
+    });
 
     // Get all posts
     app.get("/socialPost", async (req, res) => {
