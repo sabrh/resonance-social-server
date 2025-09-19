@@ -1,38 +1,19 @@
-const express = require('express');
-const cors = require('cors');
-const multer = require('multer');
+const express = require("express");
+const cors = require("cors");
+const multer = require("multer");
 const app = express();
-require('dotenv').config();
+require("dotenv").config();
 const port = process.env.PORT || 3000;
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion } = require("mongodb");
 
 app.use(cors());
 app.use(express.json());
 
 // Multer setup (memory storage for now)
 const storage = multer.memoryStorage(); // file stored in memory buffer
-const upload = multer({ 
-    storage,
-  fileFilter: (req, file, cb) => {
-    if (!file) return cb(null, true);
-    if (file.mimetype.startsWith("image/")) cb(null, true);
-    else cb(new Error("Only image files allowed"), false);
-  },
-  limits: { fileSize: 5 * 1024 * 1024 } // 5MB
- });
+const upload = multer({ storage: storage });
 
-app.get('/',(req,res)=> {
-    res.send("Resonance server is working")
-});
-app.listen(port, ()=> {
-    console.log(`server is running on port ${port}`);
-});
-
-
-
-
-
-// Connection to MongoDB 
+// Connection to MongoDB
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.qk8emwu.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 
 // const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.uwapymk.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`
@@ -43,7 +24,7 @@ const client = new MongoClient(uri, {
     version: ServerApiVersion.v1,
     strict: true,
     deprecationErrors: true,
-  }
+  },
 });
 
 async function run() {
@@ -53,201 +34,77 @@ async function run() {
     // Send a ping to confirm a successful connection
     // await client.db("admin").command({ ping: 1 });
 
-// post collection
-    const collectionPost = client.db('createPostDB').collection('createPost');
-    const usersCollection = client.db('createPostDB').collection('users');
+    // post collection
+    const collectionPost = client.db("createPostDB").collection("createPost");
+    const collectionUsers = client.db("createPostDB").collection("users");
 
-
-
-    // save new user after signup
-       app.post('/users', async (req, res) => {
+    app.get("/", (req, res) => {
+      res.send("Resonance server is working");
+    });
+    // create user doc (call this from signup)
+    app.post("/users", async (req, res) => {
       try {
-        const { email, name, displayName, photoURL, location, education, gender, about } = req.body;
-        if (!email) return res.status(400).json({ error: "Email is required" });
+        const { uid, displayName, email, photoURL } = req.body;
+        if (!uid) return res.status(400).send({ error: "uid required" });
 
-        const updateDoc = {
-          $setOnInsert: { createdAt: new Date() },
-          $set: {
-            email,
-            name: name || displayName || "",
-            displayName: displayName || name || "",
-            photo: photoURL || null,
-            banner: null,
-            bio: {
-              location: location || null,
-              education: education || null,
-              gender: gender || null,
-              about: about || null
-            }
-          },
-          $setOnInsert2: {} // placeholder
+        const existing = await collectionUsers.findOne({ uid });
+        if (existing) return res.send({ success: true, user: existing });
+
+        const userDoc = {
+          uid,
+          displayName: displayName || null,
+          email: email || null,
+          photoURL: photoURL || null,
+          banner: null, // base64 string
+          bannerFilename: null,
+          bannerMimetype: null,
+          followers: [],
+          following: [],
+          createdAt: new Date(),
         };
-
-        // upsert user (insert if not exists)
-        await usersCollection.updateOne({ email }, updateDoc, { upsert: true });
-        const user = await usersCollection.findOne({ email });
-        res.json(user);
+        const result = await collectionUsers.insertOne(userDoc);
+        res.send({ success: true, insertedId: result.insertedId });
       } catch (err) {
-        console.error("POST /users error:", err);
-        res.status(500).json({ error: "Server error" });
+        console.error(err);
+        res.status(500).send({ error: "server error" });
       }
     });
 
-    //Get user by bio, profile, photo and banner 
-    app.put('/users/:email', upload.fields([{ name: 'photo' }, { name: 'banner' }]), async (req, res) => {
+    app.post("/socialPost", upload.single("photo"), async (req, res) => {
+      const text = req.body.text; // text field
+      const file = req.file; // uploaded image
+
+      const newQuery = {
+        text,
+        image: file ? file.buffer.toString("base64") : null,
+        filename: file?.originalname,
+        mimetype: file?.mimetype,
+      };
+
+      const result = await collectionPost.insertOne(newQuery);
+      res.send({ success: true, insertedId: result.insertedId });
+    });
+
+    app.get("/socialPost", async (req, res) => {
       try {
-        const email = req.params.email;
-        const { name, location, education, gender, about } = req.body;
-
-        const setFields = {};
-        if (name) setFields.displayName = name;
-        setFields['bio'] = {
-          location: location || null,
-          education: education || null,
-          gender: gender || null,
-          about: about || null
-        };
-
-        if (req.files?.photo && req.files.photo[0]) {
-          setFields.photo = req.files.photo[0].buffer.toString('base64');
-          setFields.photoMimetype = req.files.photo[0].mimetype;
-        }
-
-        if (req.files?.banner && req.files.banner[0]) {
-          setFields.banner = req.files.banner[0].buffer.toString('base64');
-          setFields.bannerMimetype = req.files.banner[0].mimetype;
-        }
-
-        await usersCollection.updateOne({ email }, { $set: setFields }, { upsert: true });
-        const user = await usersCollection.findOne({ email });
-        res.json(user);
+        const posts = await collectionPost.find({}).toArray(); // get all documents
+        res.send(posts); // send JSON array
       } catch (err) {
-        console.error("PUT /users/:email", err);
-        res.status(500).json({ error: "Server error" });
+        console.error(err);
+        res.status(500).send({ error: "Failed to fetch posts" });
       }
     });
 
-
-    // Follow and Unfollow 
-
-     app.patch('/users/:email/follow', async (req, res) => {
-      try {
-        const targetEmail = req.params.email; // user to be followed/unfollowed
-        const { action, by } = req.body; // 'by' is the follower's email
-
-        if (!by || !action) return res.status(400).json({ error: "Missing action or by" });
-
-        if (action === 'follow') {
-          await usersCollection.updateOne({ email: targetEmail }, { $addToSet: { followers: by } }, { upsert: true });
-          await usersCollection.updateOne({ email: by }, { $addToSet: { following: targetEmail } }, { upsert: true });
-          return res.json({ status: "followed" });
-        } else {
-          await usersCollection.updateOne({ email: targetEmail }, { $pull: { followers: by } });
-          await usersCollection.updateOne({ email: by }, { $pull: { following: targetEmail } });
-          return res.json({ status: "unfollowed" });
-        }
-      } catch (err) {
-        console.error("PATCH /users/:email/follow", err);
-        res.status(500).json({ error: "Server error" });
-      }
-    });
-
-
-    // create a post, authorEmail, authorName
-    app.post('/posts', upload.single('image'), async (req, res) => {
-      try {
-        const { authorEmail, authorName, text } = req.body;
-        if (!authorEmail) return res.status(400).json({ error: "authorEmail required" });
-
-        const postDoc = {
-          authorEmail,
-          authorName: authorName || "",
-          text: text || "",
-          image: req.file ? { data: req.file.buffer.toString('base64'), mimetype: req.file.mimetype } : null,
-          likes: [],
-          comments: [],
-          createdAt: new Date()
-        };
-
-        const result = await postsCollection.insertOne(postDoc);
-        res.json({ insertedId: result.insertedId });
-      } catch (err) {
-        console.error("POST /posts", err);
-        res.status(500).json({ error: "Server error" });
-      }
-    });
-
-    // Get posts by user (email)
-     app.get('/posts/:email', async (req, res) => {
-      try {
-        const email = req.params.email;
-        const posts = await postsCollection.find({ authorEmail: email }).sort({ createdAt: -1 }).toArray();
-        res.json(posts);
-      } catch (err) {
-        console.error("GET /posts/:email", err);
-        res.status(500).json({ error: "Server error" });
-      }
-    });
-
-    // Get all posts (feed)
-     app.get('/posts', async (req, res) => {
-      try {
-        const posts = await postsCollection.find({}).sort({ createdAt: -1 }).toArray();
-        res.json(posts);
-      } catch (err) {
-        console.error("GET /posts", err);
-        res.status(500).json({ error: "Server error" });
-      }
-    });
-
-
-
-//    app.post('/socialPost', upload.single('photo'), async (req, res) => {
-//   const text = req.body.text;      // text field
-//   const file = req.file;           // uploaded image
-
-//   const newQuery = {
-//     text,
-//     image: file ? file.buffer.toString('base64') : null,
-//     filename: file?.originalname,
-//     mimetype: file?.mimetype
-//   };
-
-  
-//   const result = await collectionPost.insertOne(newQuery);
-//   res.send({ success: true, insertedId: result.insertedId });
-// });
-
-
-
-// app.get('/socialPost', async (req, res) => {
-//   try {
-    
-
-//     const posts = await collectionPost.find({}).toArray(); // get all documents
-//     res.send(posts); // send JSON array
-//   } catch (err) {
-//     console.error(err);
-//     res.status(500).send({ error: 'Failed to fetch posts' });
-//   }
-// });
-
-
-
-
-
-
-    console.log("Pinged your deployment. You successfully connected to MongoDB!");
+    console.log(
+      "Pinged your deployment. You successfully connected to MongoDB!"
+    );
   } finally {
-
-
-
-
+    app.listen(port, () => {
+      console.log(`server is running on port ${port}`);
+    });
 
     // Ensures that the client will close when you finish/error
     // await client.close();
   }
 }
 run().catch(console.dir);
-
-
