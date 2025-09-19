@@ -1,24 +1,22 @@
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
-const app = express();
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 require("dotenv").config();
-const port = process.env.PORT || 3000;
-const { MongoClient, ServerApiVersion } = require("mongodb");
 
+const app = express();
+const port = process.env.PORT || 3000;
+
+// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Multer setup (memory storage for now)
-const storage = multer.memoryStorage(); // file stored in memory buffer
-const upload = multer({ storage: storage });
+// Multer setup (memory storage)
+const storage = multer.memoryStorage();
+const upload = multer({ storage });
 
-// Connection to MongoDB
+// MongoDB connection
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.qk8emwu.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
-
-// const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.uwapymk.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`
-
-// Create a MongoClient with a MongoClientOptions object to set the Stable API version
 const client = new MongoClient(uri, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -29,19 +27,19 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    // Connect the client to the server	(optional starting in v4.7)
     await client.connect();
-    // Send a ping to confirm a successful connection
-    // await client.db("admin").command({ ping: 1 });
 
-    // post collection
-    const collectionPost = client.db("createPostDB").collection("createPost");
     const collectionUsers = client.db("createPostDB").collection("users");
+    const collectionPost = client.db("createPostDB").collection("createPost");
 
-    app.get("/", (req, res) => {
-      res.send("Resonance server is working");
-    });
-    // create user doc (call this from signup)
+    // Root route
+    app.get("/", (req, res) => res.send("Resonance server is working"));
+
+    // ============================
+    // Users
+    // ============================
+
+    // Create user
     app.post("/users", async (req, res) => {
       try {
         const { uid, displayName, email, photoURL } = req.body;
@@ -55,13 +53,14 @@ async function run() {
           displayName: displayName || null,
           email: email || null,
           photoURL: photoURL || null,
-          banner: null, // base64 string
+          banner: null,
           bannerFilename: null,
           bannerMimetype: null,
           followers: [],
           following: [],
           createdAt: new Date(),
         };
+
         const result = await collectionUsers.insertOne(userDoc);
         res.send({ success: true, insertedId: result.insertedId });
       } catch (err) {
@@ -70,84 +69,138 @@ async function run() {
       }
     });
 
-    // get user by uid
+    // Get user by uid
     app.get("/users/:uid", async (req, res) => {
-      const uid = req.params.uid;
-      const user = await collectionUsers.findOne({ uid });
-      if (!user) return res.status(404).send({ error: "User not found" });
-      res.send(user);
-    });
-
-    // upload / update banner (form-data; field name "banner")
-    app.post(
-      "/users/:uid/banner",
-      upload.single("banner"),
-      async (req, res) => {
-        try {
-          const uid = req.params.uid;
-          const file = req.file;
-          if (!file) return res.status(400).send({ error: "No file uploaded" });
-
-          const bannerBase64 = file.buffer.toString("base64");
-          const update = {
-            banner: bannerBase64,
-            bannerFilename: file.originalname,
-            bannerMimetype: file.mimetype,
-            updatedAt: new Date(),
-          };
-
-          await collectionUsers.updateOne(
-            { uid },
-            { $set: update },
-            { upsert: true }
-          );
-          res.send({ success: true });
-        } catch (err) {
-          console.error(err);
-          res.status(500).send({ error: "upload failed" });
-        }
+      try {
+        const uid = req.params.uid;
+        const user = await collectionUsers.findOne({ uid });
+        if (!user) return res.status(404).send({ error: "User not found" });
+        res.send(user);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "server error" });
       }
-    );
-
-
-
-    
-
-    app.post("/socialPost", upload.single("photo"), async (req, res) => {
-      const text = req.body.text; // text field
-      const file = req.file; // uploaded image
-
-      const newQuery = {
-        text,
-        image: file ? file.buffer.toString("base64") : null,
-        filename: file?.originalname,
-        mimetype: file?.mimetype,
-      };
-
-      const result = await collectionPost.insertOne(newQuery);
-      res.send({ success: true, insertedId: result.insertedId });
     });
 
+    // Upload/update banner
+    app.post("/users/:uid/banner", upload.single("banner"), async (req, res) => {
+      try {
+        const uid = req.params.uid;
+        const file = req.file;
+        if (!file) return res.status(400).send({ error: "No file uploaded" });
+
+        const bannerBase64 = file.buffer.toString("base64");
+        const update = {
+          banner: bannerBase64,
+          bannerFilename: file.originalname,
+          bannerMimetype: file.mimetype,
+          updatedAt: new Date(),
+        };
+
+        await collectionUsers.updateOne({ uid }, { $set: update }, { upsert: true });
+        res.send({ success: true });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "upload failed" });
+      }
+    });
+
+    // ============================
+    // Posts
+    // ============================
+
+    // Create a post
+    app.post("/socialPost", upload.single("photo"), async (req, res) => {
+      try {
+        const { text } = req.body;
+        const file = req.file;
+
+        const newPost = {
+          text,
+          image: file ? file.buffer.toString("base64") : null,
+          filename: file?.originalname,
+          mimetype: file?.mimetype,
+          likes: [],
+          comments: [],
+          createdAt: new Date(),
+        };
+
+        const result = await collectionPost.insertOne(newPost);
+        res.send({ success: true, insertedId: result.insertedId });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to create post" });
+      }
+    });
+
+    // Get all posts
     app.get("/socialPost", async (req, res) => {
       try {
-        const posts = await collectionPost.find({}).toArray(); // get all documents
-        res.send(posts); // send JSON array
+        const posts = await collectionPost.find({}).toArray();
+        res.send(posts);
       } catch (err) {
         console.error(err);
         res.status(500).send({ error: "Failed to fetch posts" });
       }
     });
 
-    console.log(
-      "Pinged your deployment. You successfully connected to MongoDB!"
-    );
-  } finally {
-    app.listen(port, () => {
-      console.log(`server is running on port ${port}`);
+    // Like/unlike a post
+    app.put("/socialPost/:id/like", async (req, res) => {
+      const postId = req.params.id;
+      const { userId } = req.body;
+
+      try {
+        const post = await collectionPost.findOne({ _id: new ObjectId(postId) });
+        if (!post) return res.status(404).send({ message: "Post not found" });
+
+        const likes = post.likes || [];
+        const updatedLikes = likes.includes(userId)
+          ? likes.filter((id) => id !== userId)
+          : [...likes, userId];
+
+        await collectionPost.updateOne({ _id: new ObjectId(postId) }, { $set: { likes: updatedLikes } });
+
+        res.send({ liked: updatedLikes.includes(userId), likesCount: updatedLikes.length });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to update like" });
+      }
     });
 
-    // Ensures that the client will close when you finish/error
-    // await client.close();
+    // Add a comment
+    app.post("/socialPost/:id/comments", async (req, res) => {
+      const postId = req.params.id;
+      const { userId, text } = req.body;
+
+      try {
+        const newComment = {
+          _id: new ObjectId(),
+          authorName: userId || "Unknown",
+          text,
+          createdAt: new Date(),
+        };
+
+        await collectionPost.updateOne(
+          { _id: new ObjectId(postId) },
+          { $push: { comments: newComment } }
+        );
+
+        res.status(201).send({ comment: newComment });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to add comment" });
+      }
+    });
+
+    console.log("Connected to MongoDB successfully!");
+  } catch (err) {
+    console.error("MongoDB connection error:", err);
   }
 }
+
 run().catch(console.dir);
+
+// Start server
+app.listen(port, () => {
+  console.log(`Server is running on port ${port}`);
+});
