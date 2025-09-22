@@ -27,7 +27,7 @@ const client = new MongoClient(uri, {
 
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
 
     const collectionUsers = client.db("createPostDB").collection("users");
     const collectionPost = client.db("createPostDB").collection("createPost");
@@ -114,15 +114,21 @@ async function run() {
       try {
         const { text } = req.body;
         const file = req.file;
+        const time = new Date().toLocaleTimeString('en-US', { timeZone: 'Asia/Dhaka' });
+        const date = new Date().toLocaleDateString('en-US', { timeZone: 'Asia/Dhaka', day: '2-digit', month: 'long' });
+        
+        
 
         const newPost = {
-          text,
+          text:text[2],
+          userName:text[0],
+          userPhoto:text[1],
           image: file ? file.buffer.toString("base64") : null,
           filename: file?.originalname,
           mimetype: file?.mimetype,
           likes: [],
           comments: [],
-          createdAt: new Date(),
+          createdAt: (time +" - "+ date),
         };
 
         const result = await collectionPost.insertOne(newPost);
@@ -143,6 +149,25 @@ async function run() {
         res.status(500).send({ error: "Failed to fetch posts" });
       }
     });
+
+    // Delete post ............................................................
+
+    app.delete("/socialPost/:id", async (req, res) => {
+  const postId = req.params.id;
+
+  try {
+    const result = await collectionPost.deleteOne({ _id: new ObjectId(postId) });
+
+    if (result.deletedCount === 0) {
+      return res.status(404).send({ message: "Post not found" });
+    }
+
+    res.send({ success: true, deletedId: postId });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ error: "Failed to delete post" });
+  }
+});
 
     // Like/unlike a post
     app.put("/socialPost/:id/like", async (req, res) => {
