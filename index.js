@@ -117,9 +117,10 @@ async function run() {
         const time = new Date().toLocaleTimeString('en-US', { timeZone: 'Asia/Dhaka' });
         const date = new Date().toLocaleDateString('en-US', { timeZone: 'Asia/Dhaka', day: '2-digit', month: 'long' });
         
-        
+        console.log(text);
 
         const newPost = {
+          userEmail:text[3],
           text:text[2],
           userName:text[0],
           userPhoto:text[1],
