@@ -59,9 +59,14 @@ async function run() {
           followers: [],
           following: [],
           createdAt: new Date(),
+          education: null,
+          location: null,
+          gender: null,
+          relationshipStatus: null,
         };
 
         const result = await collectionUsers.insertOne(userDoc);
+        console.log(result);
         res.send({ success: true, insertedId: result.insertedId });
       } catch (err) {
         console.error(err);
@@ -83,25 +88,123 @@ async function run() {
     });
 
     // Upload/update banner
-    app.post("/users/:uid/banner", upload.single("banner"), async (req, res) => {
+    app.post(
+      "/users/:uid/banner",
+      upload.single("banner"),
+      async (req, res) => {
+        try {
+          const uid = req.params.uid;
+          const file = req.file;
+          if (!file) return res.status(400).send({ error: "No file uploaded" });
+
+          const bannerBase64 = file.buffer.toString("base64");
+          const update = {
+            banner: bannerBase64,
+            bannerFilename: file.originalname,
+            bannerMimetype: file.mimetype,
+            updatedAt: new Date(),
+          };
+
+          await collectionUsers.updateOne(
+            { uid },
+            { $set: update },
+            { upsert: true }
+          );
+          res.send({ success: true });
+        } catch (err) {
+          console.error(err);
+          res.status(500).send({ error: "upload failed" });
+        }
+      }
+    );
+
+    // Update user bio
+    app.put("/users/:uid/details", async (req, res) => {
       try {
         const uid = req.params.uid;
-        const file = req.file;
-        if (!file) return res.status(400).send({ error: "No file uploaded" });
+        const { education, location, gender, relationshipStatus } = req.body;
 
-        const bannerBase64 = file.buffer.toString("base64");
         const update = {
-          banner: bannerBase64,
-          bannerFilename: file.originalname,
-          bannerMimetype: file.mimetype,
+          ...(education && { education }),
+          ...(location && { location }),
+          ...(gender && { gender }),
+          ...(relationshipStatus && { relationshipStatus }),
           updatedAt: new Date(),
         };
 
-        await collectionUsers.updateOne({ uid }, { $set: update }, { upsert: true });
-        res.send({ success: true });
+        const result = await collectionUsers.updateOne(
+          { uid },
+          { $set: update }
+        );
+
+        if (result.matchedCount === 0) {
+          return res.status(404).send({ error: "User not found" });
+        }
+
+        res.send({
+          success: true,
+          message: "User details updated successfully",
+        });
       } catch (err) {
         console.error(err);
-        res.status(500).send({ error: "upload failed" });
+        res.status(500).send({ error: "Failed to update details" });
+      }
+    });
+
+    // ============================
+    // Follow / Unfollow a user
+    // ============================
+    app.put("/users/:uid/follow", async (req, res) => {
+      try {
+        const targetUid = req.params.uid; // person to follow/unfollow
+        const { currentUid } = req.body; // logged-in user
+
+        if (!currentUid) {
+          return res.status(400).send({ error: "currentUid required" });
+        }
+
+        // find both users
+        const targetUser = await collectionUsers.findOne({ uid: targetUid });
+        const currentUser = await collectionUsers.findOne({ uid: currentUid });
+
+        if (!targetUser || !currentUser) {
+          return res.status(404).send({ error: "User not found" });
+        }
+
+        const isAlreadyFollowing = targetUser.followers?.includes(currentUid);
+
+        if (isAlreadyFollowing) {
+          // UNFOLLOW
+          await collectionUsers.updateOne(
+            { uid: targetUid },
+            { $pull: { followers: currentUid } }
+          );
+          await collectionUsers.updateOne(
+            { uid: currentUid },
+            { $pull: { following: targetUid } }
+          );
+        } else {
+          // FOLLOW
+          await collectionUsers.updateOne(
+            { uid: targetUid },
+            { $addToSet: { followers: currentUid } }
+          );
+          await collectionUsers.updateOne(
+            { uid: currentUid },
+            { $addToSet: { following: targetUid } }
+          );
+        }
+
+        // return updated counts
+        const updatedTarget = await collectionUsers.findOne({ uid: targetUid });
+        res.send({
+          success: true,
+          isFollowing: !isAlreadyFollowing,
+          followersCount: updatedTarget.followers.length,
+        });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Follow/unfollow failed" });
       }
     });
 
@@ -129,7 +232,7 @@ async function run() {
           mimetype: file?.mimetype,
           likes: [],
           comments: [],
-          createdAt: (time +" - "+ date),
+          createdAt: time + " - " + date,
         };
 
         const result = await collectionPost.insertOne(newPost);
@@ -154,21 +257,23 @@ async function run() {
     // Delete post ............................................................
 
     app.delete("/socialPost/:id", async (req, res) => {
-  const postId = req.params.id;
+      const postId = req.params.id;
 
-  try {
-    const result = await collectionPost.deleteOne({ _id: new ObjectId(postId) });
+      try {
+        const result = await collectionPost.deleteOne({
+          _id: new ObjectId(postId),
+        });
 
-    if (result.deletedCount === 0) {
-      return res.status(404).send({ message: "Post not found" });
-    }
+        if (result.deletedCount === 0) {
+          return res.status(404).send({ message: "Post not found" });
+        }
 
-    res.send({ success: true, deletedId: postId });
-  } catch (err) {
-    console.error(err);
-    res.status(500).send({ error: "Failed to delete post" });
-  }
-});
+        res.send({ success: true, deletedId: postId });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to delete post" });
+      }
+    });
 
     // Like/unlike a post
     app.put("/socialPost/:id/like", async (req, res) => {
@@ -176,7 +281,9 @@ async function run() {
       const { userId } = req.body;
 
       try {
-        const post = await collectionPost.findOne({ _id: new ObjectId(postId) });
+        const post = await collectionPost.findOne({
+          _id: new ObjectId(postId),
+        });
         if (!post) return res.status(404).send({ message: "Post not found" });
 
         const likes = post.likes || [];
@@ -184,9 +291,15 @@ async function run() {
           ? likes.filter((id) => id !== userId)
           : [...likes, userId];
 
-        await collectionPost.updateOne({ _id: new ObjectId(postId) }, { $set: { likes: updatedLikes } });
+        await collectionPost.updateOne(
+          { _id: new ObjectId(postId) },
+          { $set: { likes: updatedLikes } }
+        );
 
-        res.send({ liked: updatedLikes.includes(userId), likesCount: updatedLikes.length });
+        res.send({
+          liked: updatedLikes.includes(userId),
+          likesCount: updatedLikes.length,
+        });
       } catch (err) {
         console.error(err);
         res.status(500).send({ error: "Failed to update like" });
