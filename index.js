@@ -217,19 +217,16 @@ async function run() {
       try {
         const { text } = req.body;
         const file = req.file;
-        const time = new Date().toLocaleTimeString("en-US", {
-          timeZone: "Asia/Dhaka",
-        });
-        const date = new Date().toLocaleDateString("en-US", {
-          timeZone: "Asia/Dhaka",
-          day: "2-digit",
-          month: "long",
-        });
+        const time = new Date().toLocaleTimeString('en-US', { timeZone: 'Asia/Dhaka' });
+        const date = new Date().toLocaleDateString('en-US', { timeZone: 'Asia/Dhaka', day: '2-digit', month: 'long' });
+        
+        console.log(text);
 
         const newPost = {
-          text: text[2],
-          userName: text[0],
-          userPhoto: text[1],
+          userEmail:text[3],
+          text:text[2],
+          userName:text[0],
+          userPhoto:text[1],
           image: file ? file.buffer.toString("base64") : null,
           filename: file?.originalname,
           mimetype: file?.mimetype,
