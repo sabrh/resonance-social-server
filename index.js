@@ -323,10 +323,46 @@ async function run() {
       }
     });
 
+    // // Like/unlike a post
+    // app.put("/socialPost/:id/like", async (req, res) => {
+    //   const postId = req.params.id;
+    //   const { userId, userName, userPhoto } = req.body;
+
+    //   try {
+    //     const post = await collectionPost.findOne({
+    //       _id: new ObjectId(postId),
+    //     });
+    //     if (!post) return res.status(404).send({ message: "Post not found" });
+
+    //     const likes = post.likes || [];
+    //     let updatedLikes;
+
+    //     if (likes.includes(userId)) {
+    //       updatedLikes = likes.filter((id) => id !== userId);
+    //     } else {
+    //       updatedLikes = [...likes, userId];
+    //     }
+
+    //     await collectionPost.updateOne(
+    //       { _id: new ObjectId(postId) },
+    //       { $set: { likes: updatedLikes } }
+    //     );
+
+    //     const likedNow = updatedLikes.includes(userId);
+    //     res.send({
+    //       liked: likedNow,
+    //       likesCount: updatedLikes.length,
+    //       likes: updatedLikes,
+    //     });
+    //   } catch (err) {
+    //     console.error(err);
+    //     res.status(500).send({ error: "Failed to update like" });
+    //   }
+    // });
     // Like/unlike a post
     app.put("/socialPost/:id/like", async (req, res) => {
       const postId = req.params.id;
-      const { userId } = req.body;
+      const { userId, userName, userPhoto } = req.body;
 
       try {
         const post = await collectionPost.findOne({
@@ -334,14 +370,24 @@ async function run() {
         });
         if (!post) return res.status(404).send({ message: "Post not found" });
 
-        const likes = post.likes || [];
-        let updatedLikes;
+        // likes এখন object array
+        // const likes = post.likes || [];
+        let likes = (post.likes || []).map((l) =>
+          typeof l === "string"
+            ? { userId: l, userName: "Unknown", userPhoto: null }
+            : l
+        );
 
-        if (likes.includes(userId)) {
-          updatedLikes = likes.filter((id) => id !== userId);
+        let updatedLikes;
+        if (likes.find((l) => l.userId === userId)) {
+          // Already liked → remove like
+          updatedLikes = likes.filter((l) => l.userId !== userId);
         } else {
-          updatedLikes = [...likes, userId];
+          // Not liked yet → add like
+          updatedLikes = [...likes, { userId, userName, userPhoto }];
         }
+
+        const likedNow = updatedLikes.some((l) => l.userId === userId);
 
         await collectionPost.updateOne(
           { _id: new ObjectId(postId) },
@@ -349,8 +395,9 @@ async function run() {
         );
 
         res.send({
-          liked: updatedLikes.includes(userId),
+          liked: likedNow,
           likesCount: updatedLikes.length,
+          likes: updatedLikes, // objects পাঠাচ্ছে
         });
       } catch (err) {
         console.error(err);
@@ -379,7 +426,18 @@ async function run() {
         likes: [],
         comments: [],
         shares: [],
-        createdAt: new Date(),
+        // createdAt: new Date(),
+        createdAt: new Date().toLocaleString("en-US", {
+          timeZone: "Asia/Dhaka", // 👉 তোমার লোকাল টাইমজোন
+          hour12: true,
+          hour: "2-digit",
+          minute: "2-digit",
+          second: "2-digit",
+          day: "2-digit",
+          month: "long",
+          year: "numeric",
+        }),
+
         sharedPost: originalPost._id,
       };
 
