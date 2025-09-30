@@ -1,19 +1,17 @@
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
-const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-require("dotenv").config();
-
 const app = express();
+require("dotenv").config();
 const port = process.env.PORT || 3000;
+const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
-// Multer setup (memory storage)
+// Multer setup (memory storage for now)
 const storage = multer.memoryStorage();
-const upload = multer({ storage });
+const upload = multer({ storage: storage });
 
 // MongoDB connection
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.qk8emwu.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
@@ -25,15 +23,18 @@ const client = new MongoClient(uri, {
   },
 });
 
+// Root route
+app.get("/", (req, res) => {
+  res.send("Resonance server is working");
+});
+
 async function run() {
   try {
-    // await client.connect();
+    await client.connect();
+    console.log("Connected to MongoDB successfully!");
 
     const collectionUsers = client.db("createPostDB").collection("users");
     const collectionPost = client.db("createPostDB").collection("createPost");
-
-    // Root route
-    app.get("/", (req, res) => res.send("Resonance server is working"));
 
     // ============================
     // Users
@@ -66,7 +67,6 @@ async function run() {
         };
 
         const result = await collectionUsers.insertOne(userDoc);
-        console.log(result);
         res.send({ success: true, insertedId: result.insertedId });
       } catch (err) {
         console.error(err);
@@ -118,7 +118,7 @@ async function run() {
       }
     );
 
-    // Update user bio
+    // Update user details
     app.put("/users/:uid/details", async (req, res) => {
       try {
         const uid = req.params.uid;
@@ -137,9 +137,8 @@ async function run() {
           { $set: update }
         );
 
-        if (result.matchedCount === 0) {
+        if (result.matchedCount === 0)
           return res.status(404).send({ error: "User not found" });
-        }
 
         res.send({
           success: true,
@@ -151,25 +150,18 @@ async function run() {
       }
     });
 
-    // ============================
-    // Follow / Unfollow a user
-    // ============================
+    // Follow / Unfollow
     app.put("/users/:uid/follow", async (req, res) => {
       try {
-        const targetUid = req.params.uid; // person to follow/unfollow
-        const { currentUid } = req.body; // logged-in user
-
-        if (!currentUid) {
+        const targetUid = req.params.uid;
+        const { currentUid } = req.body;
+        if (!currentUid)
           return res.status(400).send({ error: "currentUid required" });
-        }
 
-        // find both users
         const targetUser = await collectionUsers.findOne({ uid: targetUid });
         const currentUser = await collectionUsers.findOne({ uid: currentUid });
-
-        if (!targetUser || !currentUser) {
+        if (!targetUser || !currentUser)
           return res.status(404).send({ error: "User not found" });
-        }
 
         const isAlreadyFollowing = targetUser.followers?.includes(currentUid);
 
@@ -195,7 +187,6 @@ async function run() {
           );
         }
 
-        // return updated counts
         const updatedTarget = await collectionUsers.findOne({ uid: targetUid });
         res.send({
           success: true,
@@ -217,22 +208,29 @@ async function run() {
       try {
         const { text } = req.body;
         const file = req.file;
-        const time = new Date().toLocaleTimeString('en-US', { timeZone: 'Asia/Dhaka' });
-        const date = new Date().toLocaleDateString('en-US', { timeZone: 'Asia/Dhaka', day: '2-digit', month: 'long' });
-        
-        console.log(text);
+        const time = new Date().toLocaleTimeString("en-US", {
+          timeZone: "Asia/Dhaka",
+        });
+        const date = new Date().toLocaleDateString("en-US", {
+          timeZone: "Asia/Dhaka",
+          day: "2-digit",
+          month: "long",
+        });
 
         const newPost = {
-          userEmail:text[3],
-          text:text[2],
-          userName:text[0],
-          userPhoto:text[1],
+          userEmail: text[3],
+          text: text[2],
+          userName: text[0],
+          userPhoto: text[1],
           image: file ? file.buffer.toString("base64") : null,
           filename: file?.originalname,
           mimetype: file?.mimetype,
           likes: [],
           comments: [],
           createdAt: time + " - " + date,
+          // createdAt: new Date(),
+
+          sharedPost: null,
         };
 
         const result = await collectionPost.insertOne(newPost);
@@ -244,9 +242,64 @@ async function run() {
     });
 
     // Get all posts
+    // app.get("/socialPost", async (req, res) => {
+    //   try {
+    //     const posts = await collectionPost.find({}).toArray();
+    //     res.send(posts);
+    //   } catch (err) {
+    //     console.error(err);
+    //     res.status(500).send({ error: "Failed to fetch posts" });
+    //   }
+    // });
+
+    // Get all posts with sharedPostData
     app.get("/socialPost", async (req, res) => {
       try {
-        const posts = await collectionPost.find({}).toArray();
+        const posts = await collectionPost
+          .aggregate([
+            {
+              $lookup: {
+                from: "createPost",
+                localField: "sharedPost",
+                foreignField: "_id",
+                as: "sharedPostData",
+              },
+            },
+            {
+              $unwind: {
+                path: "$sharedPostData",
+                preserveNullAndEmptyArrays: true,
+              },
+            },
+            { $sort: { createdAt: -1 } },
+            {
+              $project: {
+                text: 1,
+                image: 1,
+                mimetype: 1,
+                filename: 1,
+                likes: 1,
+                shares: 1,
+                comments: 1,
+                userName: 1,
+                userPhoto: 1,
+                userEmail: 1,
+                createdAt: 1,
+                sharedPostData: {
+                  userName: 1,
+                  userPhoto: 1,
+                  text: 1,
+                  image: 1,
+                  mimetype: 1,
+                  filename: 1,
+                  createdAt: 1,
+                  //  createdAt: "$sharedPostData.createdAt"  // ✅ include this
+                },
+              },
+            },
+          ])
+          .toArray();
+
         res.send(posts);
       } catch (err) {
         console.error(err);
@@ -254,20 +307,15 @@ async function run() {
       }
     });
 
-    // Delete post ............................................................
-
+    // Delete post
     app.delete("/socialPost/:id", async (req, res) => {
       const postId = req.params.id;
-
       try {
         const result = await collectionPost.deleteOne({
           _id: new ObjectId(postId),
         });
-
-        if (result.deletedCount === 0) {
+        if (result.deletedCount === 0)
           return res.status(404).send({ message: "Post not found" });
-        }
-
         res.send({ success: true, deletedId: postId });
       } catch (err) {
         console.error(err);
@@ -287,9 +335,13 @@ async function run() {
         if (!post) return res.status(404).send({ message: "Post not found" });
 
         const likes = post.likes || [];
-        const updatedLikes = likes.includes(userId)
-          ? likes.filter((id) => id !== userId)
-          : [...likes, userId];
+        let updatedLikes;
+
+        if (likes.includes(userId)) {
+          updatedLikes = likes.filter((id) => id !== userId);
+        } else {
+          updatedLikes = [...likes, userId];
+        }
 
         await collectionPost.updateOne(
           { _id: new ObjectId(postId) },
@@ -306,15 +358,63 @@ async function run() {
       }
     });
 
-    // Add a comment
+    // ✅ Share a post
+    // Share handler
+    app.post("/socialPost/:id/share", async (req, res) => {
+      const { id } = req.params;
+      const { userId, userName, userPhoto, text } = req.body;
+
+      const originalPost = await collectionPost.findOne({
+        _id: new ObjectId(id),
+      });
+      if (!originalPost)
+        return res.status(404).send({ error: "Original post not found" });
+
+      // নতুন share post
+      const newPost = {
+        userEmail: originalPost.userEmail,
+        userName,
+        userPhoto,
+        text: text || "",
+        likes: [],
+        comments: [],
+        shares: [],
+        createdAt: new Date(),
+        sharedPost: originalPost._id,
+      };
+
+      const result = await collectionPost.insertOne(newPost);
+      await collectionPost.updateOne(
+        { _id: originalPost._id },
+        {
+          $push: {
+            shares: { userId, userName, userPhoto, sharedAt: new Date() },
+          },
+        }
+      );
+
+      // res.send({ success: true, insertedId: result.insertedId });
+      // এখানেই তুমি শেষের অংশটা বসাবে 👇
+      const updatedPost = await collectionPost.findOne({
+        _id: originalPost._id,
+      });
+      res.send({
+        success: true,
+        insertedId: result.insertedId,
+        sharesCount: updatedPost.shares?.length || 0,
+      });
+    });
+
+    // Add comment to post
     app.post("/socialPost/:id/comments", async (req, res) => {
       const postId = req.params.id;
-      const { userId, text } = req.body;
+      const { userId, userName, text } = req.body;
+      console.log(req.body);
 
       try {
         const newComment = {
           _id: new ObjectId(),
-          authorName: userId || "Unknown",
+          authorName: userName || "Unknown",
           text,
           createdAt: new Date(),
         };
@@ -330,16 +430,13 @@ async function run() {
         res.status(500).send({ error: "Failed to add comment" });
       }
     });
-
-    console.log("Connected to MongoDB successfully!");
   } catch (err) {
-    console.error("MongoDB connection error:", err);
+    console.error(err);
   }
 }
 
 run().catch(console.dir);
 
-// Start server
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
 });
