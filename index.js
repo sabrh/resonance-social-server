@@ -206,7 +206,8 @@ async function run() {
     // Create a post
     app.post("/socialPost", upload.single("photo"), async (req, res) => {
       try {
-        const { text } = req.body;
+        
+        const {text,privacy,userName,userPhoto,userEmail} = req.body;
         const file = req.file;
         const time = new Date().toLocaleTimeString("en-US", {
           timeZone: "Asia/Dhaka",
@@ -217,11 +218,14 @@ async function run() {
           month: "long",
         });
 
+        
+
         const newPost = {
-          userEmail: text[3],
-          text: text[2],
-          userName: text[0],
-          userPhoto: text[1],
+          privacy:privacy,
+          userEmail:userEmail ,
+          text: text,
+          userName: userName,
+          userPhoto: userPhoto,
           image: file ? file.buffer.toString("base64") : null,
           filename: file?.originalname,
           mimetype: file?.mimetype,
@@ -274,6 +278,7 @@ async function run() {
             { $sort: { createdAt: -1 } },
             {
               $project: {
+                privacy:1,
                 text: 1,
                 image: 1,
                 mimetype: 1,
@@ -394,7 +399,7 @@ async function run() {
       );
 
       // res.send({ success: true, insertedId: result.insertedId });
-      // এখানেই তুমি শেষের অংশটা বসাবে 👇
+      // share part
       const updatedPost = await collectionPost.findOne({
         _id: originalPost._id,
       });
