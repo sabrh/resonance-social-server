@@ -207,6 +207,8 @@ async function run() {
     app.post("/socialPost", upload.single("photo"), async (req, res) => {
       try {
         const { text } = req.body;
+        console.log("req.body:", req.body);
+
         const file = req.file;
         const time = new Date().toLocaleTimeString("en-US", {
           timeZone: "Asia/Dhaka",
@@ -216,8 +218,10 @@ async function run() {
           day: "2-digit",
           month: "long",
         });
-
+        const { userId } = req.body;
         const newPost = {
+          userId,
+          userEmail,
           userEmail: text[3],
           text: text[2],
           userName: text[0],
@@ -276,6 +280,7 @@ async function run() {
               $project: {
                 text: 1,
                 image: 1,
+                userId: 1,
                 mimetype: 1,
                 filename: 1,
                 likes: 1,
@@ -463,15 +468,55 @@ async function run() {
       });
     });
 
-    // Add comment to post
+    // DELETE comment from a post
+    app.delete("/socialPost/:postId/comment/:commentId", async (req, res) => {
+      const { postId, commentId } = req.params;
+      const { userEmail } = req.body; // যিনি delete করতে চাচ্ছেন তার email
+
+      try {
+        // post খুঁজে বের করা
+        const post = await collectionPost.findOne({
+          _id: new ObjectId(postId),
+        });
+        if (!post) return res.status(404).send({ message: "Post not found" });
+
+        // comment খুঁজে বের করা
+        const comment = post.comments.find(
+          (c) => c._id.toString() === commentId
+        );
+        if (!comment)
+          return res.status(404).send({ message: "Comment not found" });
+
+        // শুধু comment author অথবা post owner delete করতে পারবে
+        if (comment.authorEmail !== userEmail && post.userEmail !== userEmail) {
+          return res
+            .status(403)
+            .send({ message: "Not authorized to delete this comment" });
+        }
+
+        // comment remove করা
+        await collectionPost.updateOne(
+          { _id: new ObjectId(postId) },
+          { $pull: { comments: { _id: new ObjectId(commentId) } } }
+        );
+
+        res.send({ success: true, message: "Comment deleted successfully" });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to delete comment" });
+      }
+    });
+
     app.post("/socialPost/:id/comments", async (req, res) => {
       const postId = req.params.id;
-      const { userId, userName, text } = req.body;
+      const { userId, userName, text, authorEmail } = req.body;
       console.log(req.body);
 
       try {
         const newComment = {
           _id: new ObjectId(),
+          authorId: userId,
+          authorEmail: authorEmail || "unknown@example.com",
           authorName: userName || "Unknown",
           text,
           createdAt: new Date(),
