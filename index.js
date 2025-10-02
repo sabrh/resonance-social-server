@@ -36,10 +36,6 @@ async function run() {
     const collectionUsers = client.db("createPostDB").collection("users");
     const collectionPost = client.db("createPostDB").collection("createPost");
 
-    // ============================
-    // Users
-    // ============================
-
     // Create user
     app.post("/users", async (req, res) => {
       try {
@@ -199,16 +195,10 @@ async function run() {
       }
     });
 
-    // ============================
-    // Posts
-    // ============================
-
     // Create a post
     app.post("/socialPost", upload.single("photo"), async (req, res) => {
       try {
-        const { text } = req.body;
-        console.log("req.body:", req.body);
-
+        const { text, privacy, userName, userPhoto, userEmail } = req.body;
         const file = req.file;
         const time = new Date().toLocaleTimeString("en-US", {
           timeZone: "Asia/Dhaka",
@@ -218,14 +208,13 @@ async function run() {
           day: "2-digit",
           month: "long",
         });
-        const { userId } = req.body;
+
         const newPost = {
-          userId,
-          userEmail,
-          userEmail: text[3],
-          text: text[2],
-          userName: text[0],
-          userPhoto: text[1],
+          privacy: privacy,
+          userEmail: userEmail,
+          text: text,
+          userName: userName,
+          userPhoto: userPhoto,
           image: file ? file.buffer.toString("base64") : null,
           filename: file?.originalname,
           mimetype: file?.mimetype,
@@ -244,17 +233,6 @@ async function run() {
         res.status(500).send({ error: "Failed to create post" });
       }
     });
-
-    // Get all posts
-    // app.get("/socialPost", async (req, res) => {
-    //   try {
-    //     const posts = await collectionPost.find({}).toArray();
-    //     res.send(posts);
-    //   } catch (err) {
-    //     console.error(err);
-    //     res.status(500).send({ error: "Failed to fetch posts" });
-    //   }
-    // });
 
     // Get all posts with sharedPostData
     app.get("/socialPost", async (req, res) => {
@@ -278,6 +256,7 @@ async function run() {
             { $sort: { createdAt: -1 } },
             {
               $project: {
+                privacy: 1,
                 text: 1,
                 image: 1,
                 userId: 1,
@@ -328,42 +307,6 @@ async function run() {
       }
     });
 
-    // // Like/unlike a post
-    // app.put("/socialPost/:id/like", async (req, res) => {
-    //   const postId = req.params.id;
-    //   const { userId, userName, userPhoto } = req.body;
-
-    //   try {
-    //     const post = await collectionPost.findOne({
-    //       _id: new ObjectId(postId),
-    //     });
-    //     if (!post) return res.status(404).send({ message: "Post not found" });
-
-    //     const likes = post.likes || [];
-    //     let updatedLikes;
-
-    //     if (likes.includes(userId)) {
-    //       updatedLikes = likes.filter((id) => id !== userId);
-    //     } else {
-    //       updatedLikes = [...likes, userId];
-    //     }
-
-    //     await collectionPost.updateOne(
-    //       { _id: new ObjectId(postId) },
-    //       { $set: { likes: updatedLikes } }
-    //     );
-
-    //     const likedNow = updatedLikes.includes(userId);
-    //     res.send({
-    //       liked: likedNow,
-    //       likesCount: updatedLikes.length,
-    //       likes: updatedLikes,
-    //     });
-    //   } catch (err) {
-    //     console.error(err);
-    //     res.status(500).send({ error: "Failed to update like" });
-    //   }
-    // });
     // Like/unlike a post
     app.put("/socialPost/:id/like", async (req, res) => {
       const postId = req.params.id;
@@ -410,7 +353,6 @@ async function run() {
       }
     });
 
-    // ✅ Share a post
     // Share handler
     app.post("/socialPost/:id/share", async (req, res) => {
       const { id } = req.params;
@@ -433,7 +375,7 @@ async function run() {
         shares: [],
         // createdAt: new Date(),
         createdAt: new Date().toLocaleString("en-US", {
-          timeZone: "Asia/Dhaka", // 👉 তোমার লোকাল টাইমজোন
+          timeZone: "Asia/Dhaka",
           hour12: true,
           hour: "2-digit",
           minute: "2-digit",
@@ -457,7 +399,7 @@ async function run() {
       );
 
       // res.send({ success: true, insertedId: result.insertedId });
-      // এখানেই তুমি শেষের অংশটা বসাবে 👇
+      // share part
       const updatedPost = await collectionPost.findOne({
         _id: originalPost._id,
       });
