@@ -293,7 +293,7 @@ async function run() {
                   mimetype: 1,
                   filename: 1,
                   createdAt: 1,
-                  //  createdAt: "$sharedPostData.createdAt"  // ✅ include this
+                  //  createdAt: "$sharedPostData.createdAt"  //  include this
                 },
               },
             },
@@ -358,7 +358,7 @@ async function run() {
       }
     });
 
-    // ✅ Share a post
+    // Share a post
     // Share handler
     app.post("/socialPost/:id/share", async (req, res) => {
       const { id } = req.params;
