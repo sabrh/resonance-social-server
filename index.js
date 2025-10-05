@@ -30,7 +30,7 @@ app.get("/", (req, res) => {
 
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
     console.log("Connected to MongoDB successfully!");
 
     const collectionUsers = client.db("createPostDB").collection("users");
@@ -199,6 +199,38 @@ async function run() {
       }
     });
 
+
+
+// Search Users
+
+app.get("/search/users", async (req, res) => {
+  try {
+    const query = req.query.q; // get search text from ?q=
+    if (!query) return res.status(400).send({ error: "Query required" });
+
+    // Search users by name or email (case-insensitive)
+    const results = await collectionUsers
+      .find({
+        $or: [
+          { displayName: { $regex: query, $options: "i" } },
+          { email: { $regex: query, $options: "i" } },
+        ],
+      })
+      .project({ uid: 1, displayName: 1, email: 1, photoURL: 1 })
+      .limit(10)
+      .toArray();
+
+    res.send(results);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ error: "Failed to search users" });
+  }
+});
+
+
+
+
+
     // ============================
     // Posts
     // ============================
@@ -206,7 +238,8 @@ async function run() {
     // Create a post
     app.post("/socialPost", upload.single("photo"), async (req, res) => {
       try {
-        const { text, privacy, userName, userPhoto, userEmail } = req.body;
+        const { text, privacy, userName, userPhoto, userEmail, userId } =
+          req.body;
         const file = req.file;
         const time = new Date().toLocaleTimeString("en-US", {
           timeZone: "Asia/Dhaka",
@@ -219,6 +252,7 @@ async function run() {
 
         const newPost = {
           privacy: privacy,
+          userId: userId || userEmail, //added for userId
           userEmail: userEmail,
           text: text,
           userName: userName,
@@ -243,65 +277,9 @@ async function run() {
     });
 
     // Get all posts
-    // app.get("/socialPost", async (req, res) => {
-    //   try {
-    //     const posts = await collectionPost.find({}).toArray();
-    //     res.send(posts);
-    //   } catch (err) {
-    //     console.error(err);
-    //     res.status(500).send({ error: "Failed to fetch posts" });
-    //   }
-    // });
-
-    // Get all posts with sharedPostData
     app.get("/socialPost", async (req, res) => {
       try {
-        const posts = await collectionPost
-          .aggregate([
-            {
-              $lookup: {
-                from: "createPost",
-                localField: "sharedPost",
-                foreignField: "_id",
-                as: "sharedPostData",
-              },
-            },
-            {
-              $unwind: {
-                path: "$sharedPostData",
-                preserveNullAndEmptyArrays: true,
-              },
-            },
-            { $sort: { createdAt: -1 } },
-            {
-              $project: {
-                privacy: 1,
-                text: 1,
-                image: 1,
-                mimetype: 1,
-                filename: 1,
-                likes: 1,
-                shares: 1,
-                comments: 1,
-                userName: 1,
-                userPhoto: 1,
-                userEmail: 1,
-                createdAt: 1,
-                sharedPostData: {
-                  userName: 1,
-                  userPhoto: 1,
-                  text: 1,
-                  image: 1,
-                  mimetype: 1,
-                  filename: 1,
-                  createdAt: 1,
-                  //  createdAt: "$sharedPostData.createdAt"  // ✅ include this
-                },
-              },
-            },
-          ])
-          .toArray();
-
+        const posts = await collectionPost.find({}).toArray();
         res.send(posts);
         console.log(posts);
       } catch (err) {
@@ -309,6 +287,62 @@ async function run() {
         res.status(500).send({ error: "Failed to fetch posts" });
       }
     });
+
+    // Get all posts with sharedPostData
+    // app.get("/socialPost", async (req, res) => {
+    //   try {
+    //     const posts = await collectionPost
+    //       .aggregate([
+    //         {
+    //           $lookup: {
+    //             from: "createPost",
+    //             localField: "sharedPost",
+    //             foreignField: "_id",
+    //             as: "sharedPostData",
+    //           },
+    //         },
+    //         {
+    //           $unwind: {
+    //             path: "$sharedPostData",
+    //             preserveNullAndEmptyArrays: true,
+    //           },
+    //         },
+    //         { $sort: { createdAt: -1 } },
+    //         {
+    //           $project: {
+    //             privacy:1,
+    //             text: 1,
+    //             image: 1,
+    //             mimetype: 1,
+    //             filename: 1,
+    //             likes: 1,
+    //             shares: 1,
+    //             comments: 1,
+    //             userName: 1,
+    //             userPhoto: 1,
+    //             userEmail: 1,
+    //             createdAt: 1,
+    //             sharedPostData: {
+    //               userName: 1,
+    //               userPhoto: 1,
+    //               text: 1,
+    //               image: 1,
+    //               mimetype: 1,
+    //               filename: 1,
+    //               createdAt: 1,
+    //               //  createdAt: "$sharedPostData.createdAt"  // ✅ include this
+    //             },
+    //           },
+    //         },
+    //       ])
+    //       .toArray();
+
+    //     res.send(posts);
+    //   } catch (err) {
+    //     console.error(err);
+    //     res.status(500).send({ error: "Failed to fetch posts" });
+    //   }
+    // });
 
     // Delete post
     app.delete("/socialPost/:id", async (req, res) => {
@@ -387,6 +421,8 @@ async function run() {
       }
     });
 
+    // Share a post
+    // Share handler
     app.post("/socialPost/:id/share", async (req, res) => {
       try {
         const { id } = req.params;
