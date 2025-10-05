@@ -206,8 +206,7 @@ async function run() {
     // Create a post
     app.post("/socialPost", upload.single("photo"), async (req, res) => {
       try {
-        
-        const {text,privacy,userName,userPhoto,userEmail} = req.body;
+        const { text, privacy, userName, userPhoto, userEmail } = req.body;
         const file = req.file;
         const time = new Date().toLocaleTimeString("en-US", {
           timeZone: "Asia/Dhaka",
@@ -218,11 +217,9 @@ async function run() {
           month: "long",
         });
 
-        
-
         const newPost = {
-          privacy:privacy,
-          userEmail:userEmail ,
+          privacy: privacy,
+          userEmail: userEmail,
           text: text,
           userName: userName,
           userPhoto: userPhoto,
@@ -278,7 +275,7 @@ async function run() {
             { $sort: { createdAt: -1 } },
             {
               $project: {
-                privacy:1,
+                privacy: 1,
                 text: 1,
                 image: 1,
                 mimetype: 1,
@@ -306,6 +303,7 @@ async function run() {
           .toArray();
 
         res.send(posts);
+        console.log(posts);
       } catch (err) {
         console.error(err);
         res.status(500).send({ error: "Failed to fetch posts" });
@@ -362,58 +360,368 @@ async function run() {
         res.status(500).send({ error: "Failed to update like" });
       }
     });
+    app.get("/socialPost/:id/likes", async (req, res) => {
+      const postId = req.params.id;
+      try {
+        const post = await collectionPost.findOne({
+          _id: new ObjectId(postId),
+        });
+        if (!post) return res.status(404).send({ error: "Post not found" });
 
-    // ✅ Share a post
-    // Share handler
+        const likes = post.likes || [];
+
+        const users = await collectionUsers
+          .find({ uid: { $in: likes } })
+          .project({ uid: 1, displayName: 1, photoURL: 1 })
+          .toArray();
+
+        // Remove duplicates (just in case)
+        const uniqueUsers = Array.from(
+          new Map(users.map((u) => [u.uid, u])).values()
+        );
+
+        res.send(uniqueUsers);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to fetch like users" });
+      }
+    });
+
     app.post("/socialPost/:id/share", async (req, res) => {
-      const { id } = req.params;
-      const { userId, userName, userPhoto, text } = req.body;
+      try {
+        const { id } = req.params;
+        const { userId, userName, userPhoto, text } = req.body;
 
-      const originalPost = await collectionPost.findOne({
-        _id: new ObjectId(id),
-      });
-      if (!originalPost)
-        return res.status(404).send({ error: "Original post not found" });
+        const originalPost = await collectionPost.findOne({
+          _id: new ObjectId(id),
+        });
 
-      // নতুন share post
-      const newPost = {
-        userEmail: originalPost.userEmail,
-        userName,
-        userPhoto,
-        text: text || "",
-        likes: [],
-        comments: [],
-        shares: [],
-        createdAt: new Date(),
-        sharedPost: originalPost._id,
-      };
-
-      const result = await collectionPost.insertOne(newPost);
-      await collectionPost.updateOne(
-        { _id: originalPost._id },
-        {
-          $push: {
-            shares: { userId, userName, userPhoto, sharedAt: new Date() },
-          },
+        if (!originalPost) {
+          return res.status(404).send({ error: "Original post not found" });
         }
+
+        const newPost = {
+          userId,
+          userName,
+          userPhoto,
+          text: text || "",
+          likes: [],
+          comments: [],
+          shares: [],
+          createdAt: new Date(),
+          sharedPost: originalPost._id, // original post reference
+        };
+
+        const result = await collectionPost.insertOne(newPost);
+
+        await collectionPost.updateOne(
+          { _id: originalPost._id },
+          {
+            $push: {
+              shares: { userId, userName, userPhoto, sharedAt: new Date() },
+            },
+          }
+        );
+
+        const insertedPost = await collectionPost.findOne({
+          _id: result.insertedId,
+        });
+
+        const populatedPost = {
+          ...insertedPost,
+          sharedPost: {
+            userName: originalPost.userName,
+            userPhoto: originalPost.userPhoto,
+            text: originalPost.text,
+            image: originalPost.image,
+            mimetype: originalPost.mimetype,
+            filename: originalPost.filename,
+            createdAt: originalPost.createdAt,
+          },
+        };
+
+        res.send({ success: true, post: populatedPost });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to share post" });
+      }
+    });
+    // Add reply (top-level or nested)
+    app.post("/socialPost/:postId/replies", async (req, res) => {
+      const { postId } = req.params;
+      const { commentId,authorPhoto, parentReplyId, authorName,authorEmail, text } = req.body;
+
+      try {
+        const post = await collectionPost.findOne({
+          _id: new ObjectId(postId),
+        });
+        if (!post) return res.status(404).send({ error: "Post not found" });
+
+        const newReply = {
+          _id: new ObjectId(),
+          authorName,
+          authorEmail, // <-- ensure this comes from body
+          authorPhoto,
+          text,
+          createdAt: new Date(),
+          replies: [],
+        };
+
+        if (parentReplyId) {
+          // Nested reply
+          post.comments = addNestedReply(
+            post.comments,
+            commentId,
+            parentReplyId,
+            newReply
+          );
+        } else {
+          // Top-level reply
+          post.comments = post.comments.map((c) =>
+            c._id.toString() === commentId
+              ? { ...c, replies: [...(c.replies || []), newReply] }
+              : c
+          );
+        }
+
+        await collectionPost.updateOne(
+          { _id: new ObjectId(postId) },
+          { $set: { comments: post.comments } }
+        );
+
+        res.send({ success: true, reply: newReply });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to add reply" });
+      }
+    });
+
+    // Recursive function to add nested reply
+    function addNestedReply(comments, commentId, parentReplyId, newReply) {
+      return comments.map((c) => {
+        if (c._id.toString() === commentId) {
+          return {
+            ...c,
+            replies: addNestedReplyRecursive(
+              c.replies || [],
+              parentReplyId,
+              newReply
+            ),
+          };
+        }
+        return c;
+      });
+    }
+
+    function addNestedReplyRecursive(replies, targetId, newReply) {
+      return replies.map((r) => {
+        if (r._id.toString() === targetId.toString()) {
+          return { ...r, replies: [...(r.replies || []), newReply] };
+        }
+        return {
+          ...r,
+          replies: addNestedReplyRecursive(r.replies || [], targetId, newReply),
+        };
+      });
+    }
+
+    // DELETE a reply (top-level or nested) from a post
+    app.delete("/socialPost/:postId/replies/:replyId", async (req, res) => {
+      const { postId, replyId } = req.params;
+
+      try {
+        const post = await collectionPost.findOne({
+          _id: new ObjectId(postId),
+        });
+        if (!post) return res.status(404).send({ error: "Post not found" });
+
+        // Recursively delete reply
+        const updatedComments = deleteReplyRecursive(post.comments, replyId);
+
+        await collectionPost.updateOne(
+          { _id: new ObjectId(postId) },
+          { $set: { comments: updatedComments } }
+        );
+
+        res.send({ success: true });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to delete reply" });
+      }
+    });
+
+    // Recursive function to delete nested reply
+    function deleteReplyRecursive(comments, targetId) {
+      return comments
+        .filter((c) => c._id.toString() !== targetId.toString())
+        .map((c) => ({
+          ...c,
+          replies: c.replies ? deleteReplyRecursive(c.replies, targetId) : [],
+        }));
+    }
+
+    // function addReplyRecursive(comments, targetId, newReply) {
+    //   return comments.map((c) => {
+    //     if (c._id.toString() === targetId.toString()) {
+    //       return { ...c, replies: [...(c.replies || []), newReply] };
+    //     }
+    //     if (c.replies && c.replies.length > 0) {
+    //       return {
+    //         ...c,
+    //         replies: addReplyRecursive(c.replies, targetId, newReply),
+    //       };
+    //     }
+    //     return c;
+    //   });
+    // }
+    function updateReplyRecursive(comments, targetId, newText, authorEmail) {
+      return comments.map((c) => {
+        if (c._id.toString() === targetId.toString()) {
+          if (c.authorEmail === authorEmail) {
+            return { ...c, text: newText };
+          }
+          return c;
+        }
+        if (c.replies && c.replies.length > 0) {
+          return {
+            ...c,
+            replies: updateReplyRecursive(
+              c.replies,
+              targetId,
+              newText,
+              authorEmail
+            ),
+          };
+        }
+        return c;
+      });
+    }
+
+    app.post("/socialPost/:postId/replies/:replyId", async (req, res) => {
+      const { postId, replyId } = req.params;
+      const { text, authorName, authorEmail, authorPhoto } = req.body;
+
+      try {
+        const post = await collectionPost.findOne({
+          _id: new ObjectId(postId),
+        });
+        if (!post) return res.status(404).send({ error: "Post not found" });
+
+        const newReply = {
+          _id: new ObjectId(),
+          authorName,
+          authorEmail,
+          authorPhoto,
+          text,
+          createdAt: new Date(),
+          replies: [],
+        };
+
+        const updatedComments = addReplyRecursive(
+          post.comments,
+          replyId,
+          newReply
+        );
+
+        await collectionPost.updateOne(
+          { _id: new ObjectId(postId) },
+          { $set: { comments: updatedComments } }
+        );
+
+        res.status(201).send({ reply: newReply });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to add nested reply" });
+      }
+    });
+
+    app.put("/socialPost/:postId/replies/:replyId", async (req, res) => {
+      const { postId, replyId } = req.params;
+      const { text, authorEmail } = req.body;
+
+      try {
+        const post = await collectionPost.findOne({
+          _id: new ObjectId(postId),
+        });
+        if (!post) return res.status(404).send({ error: "Post not found" });
+
+        const updatedComments = updateReplyRecursive(
+          post.comments,
+          replyId,
+          text,
+          authorEmail
+        );
+
+        await collectionPost.updateOne(
+          { _id: new ObjectId(postId) },
+          { $set: { comments: updatedComments } }
+        );
+
+        res.send({ success: true });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to edit reply" });
+      }
+    });
+
+    // Edit Comment
+    app.put("/socialPost/:postId/comment/:commentId", async (req, res) => {
+      const { postId, commentId } = req.params;
+      const { text, userEmail } = req.body;
+
+      const post = await collectionPost.findOne({ _id: new ObjectId(postId) });
+      const comment = post.comments.find((c) => c._id.toString() === commentId);
+      if (!comment) return res.status(404).send({ error: "Comment not found" });
+
+      if (comment.authorEmail !== userEmail)
+        return res.status(403).send({ error: "Not authorized" });
+
+      await collectionPost.updateOne(
+        { _id: new ObjectId(postId), "comments._id": new ObjectId(commentId) },
+        { $set: { "comments.$.text": text } }
       );
 
-      // res.send({ success: true, insertedId: result.insertedId });
-      // share part
-      const updatedPost = await collectionPost.findOne({
-        _id: originalPost._id,
-      });
-      res.send({
-        success: true,
-        insertedId: result.insertedId,
-        sharesCount: updatedPost.shares?.length || 0,
-      });
+      res.send({ success: true });
+    });
+
+    // Delete comment
+    app.delete("/socialPost/:postId/comment/:commentId", async (req, res) => {
+      const { postId, commentId } = req.params;
+      const { userEmail } = req.body; // client
+      try {
+        const post = await collectionPost.findOne({
+          _id: new ObjectId(postId),
+        });
+        if (!post) return res.status(404).send({ error: "Post not found" });
+
+        const comment = post.comments.find(
+          (c) => c._id.toString() === commentId
+        );
+        if (!comment)
+          return res.status(404).send({ error: "Comment not found" });
+
+        if (comment.authorEmail !== userEmail && post.userEmail !== userEmail) {
+          return res
+            .status(403)
+            .send({ error: "Not authorized to delete comment" });
+        }
+
+        await collectionPost.updateOne(
+          { _id: new ObjectId(postId) },
+          { $pull: { comments: { _id: new ObjectId(commentId) } } }
+        );
+
+        res.send({ success: true, deletedId: commentId });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to delete comment" });
+      }
     });
 
     // Add comment to post
     app.post("/socialPost/:id/comments", async (req, res) => {
       const postId = req.params.id;
-      const { userId, userName, text } = req.body;
+      const { userName, text, authorEmail, authorPhoto } = req.body;
       console.log(req.body);
 
       try {
@@ -421,7 +729,10 @@ async function run() {
           _id: new ObjectId(),
           authorName: userName || "Unknown",
           text,
+          authorEmail,
+          authorPhoto, //
           createdAt: new Date(),
+          replies: [],
         };
 
         await collectionPost.updateOne(
