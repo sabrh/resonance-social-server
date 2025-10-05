@@ -30,7 +30,7 @@ app.get("/", (req, res) => {
 
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
     console.log("Connected to MongoDB successfully!");
 
     const collectionUsers = client.db("createPostDB").collection("users");
