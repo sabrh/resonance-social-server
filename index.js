@@ -199,6 +199,38 @@ async function run() {
       }
     });
 
+
+
+// Search Users
+
+app.get("/search/users", async (req, res) => {
+  try {
+    const query = req.query.q; // get search text from ?q=
+    if (!query) return res.status(400).send({ error: "Query required" });
+
+    // Search users by name or email (case-insensitive)
+    const results = await collectionUsers
+      .find({
+        $or: [
+          { displayName: { $regex: query, $options: "i" } },
+          { email: { $regex: query, $options: "i" } },
+        ],
+      })
+      .project({ uid: 1, displayName: 1, email: 1, photoURL: 1 })
+      .limit(10)
+      .toArray();
+
+    res.send(results);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ error: "Failed to search users" });
+  }
+});
+
+
+
+
+
     // ============================
     // Posts
     // ============================
@@ -206,8 +238,8 @@ async function run() {
     // Create a post
     app.post("/socialPost", upload.single("photo"), async (req, res) => {
       try {
-        
-        const {text,privacy,userName,userPhoto,userEmail} = req.body;
+        const { text, privacy, userName, userPhoto, userEmail, userId } =
+          req.body;
         const file = req.file;
         const time = new Date().toLocaleTimeString("en-US", {
           timeZone: "Asia/Dhaka",
@@ -218,11 +250,10 @@ async function run() {
           month: "long",
         });
 
-        
-
         const newPost = {
-          privacy:privacy,
-          userEmail:userEmail ,
+          privacy: privacy,
+          userId: userId || userEmail, //added for userId
+          userEmail: userEmail,
           text: text,
           userName: userName,
           userPhoto: userPhoto,
@@ -363,7 +394,7 @@ async function run() {
       }
     });
 
-    // ✅ Share a post
+    // Share a post
     // Share handler
     app.post("/socialPost/:id/share", async (req, res) => {
       const { id } = req.params;
