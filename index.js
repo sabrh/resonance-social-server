@@ -33,8 +33,8 @@ async function run() {
     // await client.connect();
     console.log("Connected to MongoDB successfully!");
 
-    const collectionUsers = client.db("createPostDB").collection("users");
-    const collectionPost = client.db("createPostDB").collection("createPost");
+    const collectionUsers  = client.db("createPostDB").collection("users");
+    const collectionPost  = client.db("createPostDB").collection("createPost");
 
     // ============================
     // Users
@@ -46,7 +46,7 @@ async function run() {
         const { uid, displayName, email, photoURL } = req.body;
         if (!uid) return res.status(400).send({ error: "uid required" });
 
-        const existing = await collectionUsers.findOne({ uid });
+        const existing = await collectionUsers .findOne({ uid });
         if (existing) return res.send({ success: true, user: existing });
 
         const userDoc = {
@@ -66,7 +66,7 @@ async function run() {
           relationshipStatus: null,
         };
 
-        const result = await collectionUsers.insertOne(userDoc);
+        const result = await collectionUsers .insertOne(userDoc);
         res.send({ success: true, insertedId: result.insertedId });
       } catch (err) {
         console.error(err);
@@ -78,7 +78,7 @@ async function run() {
     app.get("/users/:uid", async (req, res) => {
       try {
         const uid = req.params.uid;
-        const user = await collectionUsers.findOne({ uid });
+        const user = await collectionUsers .findOne({ uid });
         if (!user) return res.status(404).send({ error: "User not found" });
         res.send(user);
       } catch (err) {
@@ -105,7 +105,7 @@ async function run() {
             updatedAt: new Date(),
           };
 
-          await collectionUsers.updateOne(
+          await collectionUsers .updateOne(
             { uid },
             { $set: update },
             { upsert: true }
@@ -132,7 +132,7 @@ async function run() {
           updatedAt: new Date(),
         };
 
-        const result = await collectionUsers.updateOne(
+        const result = await collectionUsers .updateOne(
           { uid },
           { $set: update }
         );
@@ -150,48 +150,67 @@ async function run() {
       }
     });
 
-    // Follow / Unfollow
-    app.put("/users/:uid/follow", async (req, res) => {
+    // Follow / Unfollow - FIXED VERSION
+    app.put("/users/:targetUid/follow", async (req, res) => {
       try {
-        const targetUid = req.params.uid;
+        const { targetUid } = req.params;
         const { currentUid } = req.body;
-        if (!currentUid)
+        
+        if (!currentUid) {
           return res.status(400).send({ error: "currentUid required" });
+        }
 
-        const targetUser = await collectionUsers.findOne({ uid: targetUid });
-        const currentUser = await collectionUsers.findOne({ uid: currentUid });
-        if (!targetUser || !currentUser)
+        // Prevent self-follow
+        if (targetUid === currentUid) {
+          return res.status(400).send({ error: "Cannot follow yourself" });
+        }
+
+        const targetUser = await collectionUsers .findOne({ uid: targetUid });
+        const currentUser = await collectionUsers .findOne({ uid: currentUid });
+        
+        if (!targetUser || !currentUser) {
           return res.status(404).send({ error: "User not found" });
+        }
 
-        const isAlreadyFollowing = targetUser.followers?.includes(currentUid);
+        const isCurrentlyFollowing = targetUser.followers?.includes(currentUid) || false;
 
-        if (isAlreadyFollowing) {
+        if (isCurrentlyFollowing) {
           // UNFOLLOW
-          await collectionUsers.updateOne(
+          await collectionUsers .updateOne(
             { uid: targetUid },
             { $pull: { followers: currentUid } }
           );
-          await collectionUsers.updateOne(
+          await collectionUsers .updateOne(
             { uid: currentUid },
             { $pull: { following: targetUid } }
           );
         } else {
           // FOLLOW
-          await collectionUsers.updateOne(
+          await collectionUsers .updateOne(
             { uid: targetUid },
-            { $addToSet: { followers: currentUid } }
+            { 
+              $addToSet: { followers: currentUid },
+              $set: { updatedAt: new Date() }
+            }
           );
-          await collectionUsers.updateOne(
+          await collectionUsers .updateOne(
             { uid: currentUid },
-            { $addToSet: { following: targetUid } }
+            { 
+              $addToSet: { following: targetUid },
+              $set: { updatedAt: new Date() }
+            }
           );
         }
 
-        const updatedTarget = await collectionUsers.findOne({ uid: targetUid });
+        // Get updated counts
+        const updatedTarget = await collectionUsers .findOne({ uid: targetUid });
+        const updatedCurrent = await collectionUsers .findOne({ uid: currentUid });
+
         res.send({
           success: true,
-          isFollowing: !isAlreadyFollowing,
-          followersCount: updatedTarget.followers.length,
+          isFollowing: !isCurrentlyFollowing,
+          followersCount: updatedTarget.followers?.length || 0,
+          followingCount: updatedCurrent.following?.length || 0
         });
       } catch (err) {
         console.error(err);
@@ -199,37 +218,100 @@ async function run() {
       }
     });
 
+    // Newsfeed with proper privacy logic - FIXED VERSION
+    app.get("/feed/:uid", async (req, res) => {
+      try {
+        const { uid } = req.params;
 
+        const currentUser = await collectionUsers .findOne({ uid });
+        if (!currentUser) return res.status(404).send({ error: "User not found" });
 
-// Search Users
+        // Get following list or empty array if none
+        const following = currentUser.following || [];
+        
+        // Fetch posts with proper privacy logic
+        const posts = await collectionPost 
+          .find({
+            $or: [
+              { userId: uid }, // User's own posts (all privacy levels)
+              { 
+                userId: { $in: following }, // Following users' posts
+                $or: [
+                  { privacy: "public" },
+                  { privacy: "private" } // Can see private posts of followed users
+                ]
+              },
+              { 
+                userId: { $nin: [...following, uid] }, // Non-followed users
+                privacy: "public" // Only public posts
+              }
+            ]
+          })
+          .sort({ createdAt: -1 })
+          .toArray();
 
-app.get("/search/users", async (req, res) => {
-  try {
-    const query = req.query.q; // get search text from ?q=
-    if (!query) return res.status(400).send({ error: "Query required" });
+        res.send(posts);
+      } catch (err) {
+        console.error("Feed error:", err);
+        res.status(500).send({ error: "Failed to load feed", details: err.message });
+      }
+    });
 
-    // Search users by name or email (case-insensitive)
-    const results = await collectionUsers
-      .find({
-        $or: [
-          { displayName: { $regex: query, $options: "i" } },
-          { email: { $regex: query, $options: "i" } },
-        ],
-      })
-      .project({ uid: 1, displayName: 1, email: 1, photoURL: 1 })
-      .limit(10)
-      .toArray();
+    // Profile posts with privacy logic - FIXED VERSION
+    app.get("/users/:targetUid/posts", async (req, res) => {
+      try {
+        const { targetUid } = req.params;
+        const { viewerUid } = req.query;
 
-    res.send(results);
-  } catch (err) {
-    console.error(err);
-    res.status(500).send({ error: "Failed to search users" });
-  }
-});
+        const targetUser = await collectionUsers .findOne({ uid: targetUid });
+        if (!targetUser) return res.status(404).send({ error: "User not found" });
 
+        let query = { userId: targetUid }; // Use userId to match your Post schema
 
+        // If viewer is not the target user AND not following, show only public posts
+        if (viewerUid && viewerUid !== targetUid) {
+          const isFollowing = targetUser.followers?.includes(viewerUid) || false;
+          if (!isFollowing) {
+            query.privacy = "public";
+          }
+        }
 
+        const userPosts = await collectionPost 
+          .find(query)
+          .sort({ createdAt: -1 })
+          .toArray();
 
+        res.send(userPosts);
+      } catch (err) {
+        console.error("Profile posts error:", err);
+        res.status(500).send({ error: "Failed to load profile posts", details: err.message });
+      }
+    });
+
+    // Search Users
+    app.get("/search/users", async (req, res) => {
+      try {
+        const query = req.query.q; // get search text from ?q=
+        if (!query) return res.status(400).send({ error: "Query required" });
+
+        // Search users by name or email (case-insensitive)
+        const results = await collectionUsers 
+          .find({
+            $or: [
+              { displayName: { $regex: query, $options: "i" } },
+              { email: { $regex: query, $options: "i" } },
+            ],
+          })
+          .project({ uid: 1, displayName: 1, email: 1, photoURL: 1, followers: 1, following: 1 })
+          .limit(10)
+          .toArray();
+
+        res.send(results);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to search users" });
+      }
+    });
 
     // ============================
     // Posts
@@ -238,8 +320,7 @@ app.get("/search/users", async (req, res) => {
     // Create a post
     app.post("/socialPost", upload.single("photo"), async (req, res) => {
       try {
-        const { text, privacy, userName, userPhoto, userEmail, userId } =
-          req.body;
+        const { text, privacy, userName, userPhoto, userEmail, userId } = req.body;
         const file = req.file;
         const time = new Date().toLocaleTimeString("en-US", {
           timeZone: "Asia/Dhaka",
@@ -251,8 +332,8 @@ app.get("/search/users", async (req, res) => {
         });
 
         const newPost = {
-          privacy: privacy,
-          userId: userId || userEmail, //added for userId
+          privacy: privacy || "public", // Ensure privacy field exists
+          userId: userId || userEmail,
           userEmail: userEmail,
           text: text,
           userName: userName,
@@ -263,12 +344,10 @@ app.get("/search/users", async (req, res) => {
           likes: [],
           comments: [],
           createdAt: time + " - " + date,
-          // createdAt: new Date(),
-
           sharedPost: null,
         };
 
-        const result = await collectionPost.insertOne(newPost);
+        const result = await collectionPost .insertOne(newPost);
         res.send({ success: true, insertedId: result.insertedId });
       } catch (err) {
         console.error(err);
@@ -276,10 +355,10 @@ app.get("/search/users", async (req, res) => {
       }
     });
 
-    // Get all posts
+    // Get all posts (for debugging - consider removing in production)
     app.get("/socialPost", async (req, res) => {
       try {
-        const posts = await collectionPost.find({}).toArray();
+        const posts = await collectionPost .find({}).toArray();
         res.send(posts);
         console.log(posts);
       } catch (err) {
@@ -288,67 +367,11 @@ app.get("/search/users", async (req, res) => {
       }
     });
 
-    // Get all posts with sharedPostData
-    // app.get("/socialPost", async (req, res) => {
-    //   try {
-    //     const posts = await collectionPost
-    //       .aggregate([
-    //         {
-    //           $lookup: {
-    //             from: "createPost",
-    //             localField: "sharedPost",
-    //             foreignField: "_id",
-    //             as: "sharedPostData",
-    //           },
-    //         },
-    //         {
-    //           $unwind: {
-    //             path: "$sharedPostData",
-    //             preserveNullAndEmptyArrays: true,
-    //           },
-    //         },
-    //         { $sort: { createdAt: -1 } },
-    //         {
-    //           $project: {
-    //             privacy:1,
-    //             text: 1,
-    //             image: 1,
-    //             mimetype: 1,
-    //             filename: 1,
-    //             likes: 1,
-    //             shares: 1,
-    //             comments: 1,
-    //             userName: 1,
-    //             userPhoto: 1,
-    //             userEmail: 1,
-    //             createdAt: 1,
-    //             sharedPostData: {
-    //               userName: 1,
-    //               userPhoto: 1,
-    //               text: 1,
-    //               image: 1,
-    //               mimetype: 1,
-    //               filename: 1,
-    //               createdAt: 1,
-    //               //  createdAt: "$sharedPostData.createdAt"  // ✅ include this
-    //             },
-    //           },
-    //         },
-    //       ])
-    //       .toArray();
-
-    //     res.send(posts);
-    //   } catch (err) {
-    //     console.error(err);
-    //     res.status(500).send({ error: "Failed to fetch posts" });
-    //   }
-    // });
-
     // Delete post
     app.delete("/socialPost/:id", async (req, res) => {
       const postId = req.params.id;
       try {
-        const result = await collectionPost.deleteOne({
+        const result = await collectionPost .deleteOne({
           _id: new ObjectId(postId),
         });
         if (result.deletedCount === 0)
@@ -366,7 +389,7 @@ app.get("/search/users", async (req, res) => {
       const { userId } = req.body;
 
       try {
-        const post = await collectionPost.findOne({
+        const post = await collectionPost .findOne({
           _id: new ObjectId(postId),
         });
         if (!post) return res.status(404).send({ message: "Post not found" });
@@ -380,7 +403,7 @@ app.get("/search/users", async (req, res) => {
           updatedLikes = [...likes, userId];
         }
 
-        await collectionPost.updateOne(
+        await collectionPost .updateOne(
           { _id: new ObjectId(postId) },
           { $set: { likes: updatedLikes } }
         );
@@ -405,6 +428,22 @@ app.get("/search/users", async (req, res) => {
         const likes = post.likes || [];
 
         const users = await collectionUsers
+          .find({ uid: { $in: likes } })
+          .project({ uid: 1, displayName: 1, photoURL: 1 })
+          .toArray();
+
+    // Get users who liked a post
+    app.get("/socialPost/:id/likes", async (req, res) => {
+      const postId = req.params.id;
+      try {
+        const post = await collectionPost .findOne({
+          _id: new ObjectId(postId),
+        });
+        if (!post) return res.status(404).send({ error: "Post not found" });
+
+        const likes = post.likes || [];
+
+        const users = await collectionUsers 
           .find({ uid: { $in: likes } })
           .project({ uid: 1, displayName: 1, photoURL: 1 })
           .toArray();
@@ -771,7 +810,7 @@ app.get("/search/users", async (req, res) => {
           replies: [],
         };
 
-        await collectionPost.updateOne(
+        await collectionPost .updateOne(
           { _id: new ObjectId(postId) },
           { $push: { comments: newComment } }
         );
