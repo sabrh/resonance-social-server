@@ -360,6 +360,7 @@ async function run() {
       try {
         const posts = await collectionPost .find({}).toArray();
         res.send(posts);
+        console.log(posts);
       } catch (err) {
         console.error(err);
         res.status(500).send({ error: "Failed to fetch posts" });
@@ -416,6 +417,20 @@ async function run() {
         res.status(500).send({ error: "Failed to update like" });
       }
     });
+    app.get("/socialPost/:id/likes", async (req, res) => {
+      const postId = req.params.id;
+      try {
+        const post = await collectionPost.findOne({
+          _id: new ObjectId(postId),
+        });
+        if (!post) return res.status(404).send({ error: "Post not found" });
+
+        const likes = post.likes || [];
+
+        const users = await collectionUsers
+          .find({ uid: { $in: likes } })
+          .project({ uid: 1, displayName: 1, photoURL: 1 })
+          .toArray();
 
     // Get users who liked a post
     app.get("/socialPost/:id/likes", async (req, res) => {
@@ -446,12 +461,13 @@ async function run() {
     });
 
     // Share a post
+    // Share handler
     app.post("/socialPost/:id/share", async (req, res) => {
       try {
         const { id } = req.params;
         const { userId, userName, userPhoto, text } = req.body;
 
-        const originalPost = await collectionPost .findOne({
+        const originalPost = await collectionPost.findOne({
           _id: new ObjectId(id),
         });
 
@@ -471,9 +487,9 @@ async function run() {
           sharedPost: originalPost._id, // original post reference
         };
 
-        const result = await collectionPost .insertOne(newPost);
+        const result = await collectionPost.insertOne(newPost);
 
-        await collectionPost .updateOne(
+        await collectionPost.updateOne(
           { _id: originalPost._id },
           {
             $push: {
@@ -482,7 +498,7 @@ async function run() {
           }
         );
 
-        const insertedPost = await collectionPost .findOne({
+        const insertedPost = await collectionPost.findOne({
           _id: result.insertedId,
         });
 
@@ -505,14 +521,13 @@ async function run() {
         res.status(500).send({ error: "Failed to share post" });
       }
     });
-
     // Add reply (top-level or nested)
     app.post("/socialPost/:postId/replies", async (req, res) => {
       const { postId } = req.params;
-      const { commentId, authorPhoto, parentReplyId, authorName, authorEmail, text } = req.body;
+      const { commentId,authorPhoto, parentReplyId, authorName,authorEmail, text } = req.body;
 
       try {
-        const post = await collectionPost .findOne({
+        const post = await collectionPost.findOne({
           _id: new ObjectId(postId),
         });
         if (!post) return res.status(404).send({ error: "Post not found" });
@@ -520,7 +535,7 @@ async function run() {
         const newReply = {
           _id: new ObjectId(),
           authorName,
-          authorEmail,
+          authorEmail, // <-- ensure this comes from body
           authorPhoto,
           text,
           createdAt: new Date(),
@@ -544,7 +559,7 @@ async function run() {
           );
         }
 
-        await collectionPost .updateOne(
+        await collectionPost.updateOne(
           { _id: new ObjectId(postId) },
           { $set: { comments: post.comments } }
         );
@@ -590,7 +605,7 @@ async function run() {
       const { postId, replyId } = req.params;
 
       try {
-        const post = await collectionPost .findOne({
+        const post = await collectionPost.findOne({
           _id: new ObjectId(postId),
         });
         if (!post) return res.status(404).send({ error: "Post not found" });
@@ -598,7 +613,7 @@ async function run() {
         // Recursively delete reply
         const updatedComments = deleteReplyRecursive(post.comments, replyId);
 
-        await collectionPost .updateOne(
+        await collectionPost.updateOne(
           { _id: new ObjectId(postId) },
           { $set: { comments: updatedComments } }
         );
@@ -620,6 +635,20 @@ async function run() {
         }));
     }
 
+    // function addReplyRecursive(comments, targetId, newReply) {
+    //   return comments.map((c) => {
+    //     if (c._id.toString() === targetId.toString()) {
+    //       return { ...c, replies: [...(c.replies || []), newReply] };
+    //     }
+    //     if (c.replies && c.replies.length > 0) {
+    //       return {
+    //         ...c,
+    //         replies: addReplyRecursive(c.replies, targetId, newReply),
+    //       };
+    //     }
+    //     return c;
+    //   });
+    // }
     function updateReplyRecursive(comments, targetId, newText, authorEmail) {
       return comments.map((c) => {
         if (c._id.toString() === targetId.toString()) {
@@ -648,7 +677,7 @@ async function run() {
       const { text, authorName, authorEmail, authorPhoto } = req.body;
 
       try {
-        const post = await collectionPost .findOne({
+        const post = await collectionPost.findOne({
           _id: new ObjectId(postId),
         });
         if (!post) return res.status(404).send({ error: "Post not found" });
@@ -669,7 +698,7 @@ async function run() {
           newReply
         );
 
-        await collectionPost .updateOne(
+        await collectionPost.updateOne(
           { _id: new ObjectId(postId) },
           { $set: { comments: updatedComments } }
         );
@@ -681,27 +710,12 @@ async function run() {
       }
     });
 
-    function addReplyRecursive(comments, targetId, newReply) {
-      return comments.map((c) => {
-        if (c._id.toString() === targetId.toString()) {
-          return { ...c, replies: [...(c.replies || []), newReply] };
-        }
-        if (c.replies && c.replies.length > 0) {
-          return {
-            ...c,
-            replies: addReplyRecursive(c.replies, targetId, newReply),
-          };
-        }
-        return c;
-      });
-    }
-
     app.put("/socialPost/:postId/replies/:replyId", async (req, res) => {
       const { postId, replyId } = req.params;
       const { text, authorEmail } = req.body;
 
       try {
-        const post = await collectionPost .findOne({
+        const post = await collectionPost.findOne({
           _id: new ObjectId(postId),
         });
         if (!post) return res.status(404).send({ error: "Post not found" });
@@ -713,7 +727,7 @@ async function run() {
           authorEmail
         );
 
-        await collectionPost .updateOne(
+        await collectionPost.updateOne(
           { _id: new ObjectId(postId) },
           { $set: { comments: updatedComments } }
         );
@@ -730,14 +744,14 @@ async function run() {
       const { postId, commentId } = req.params;
       const { text, userEmail } = req.body;
 
-      const post = await collectionPost .findOne({ _id: new ObjectId(postId) });
+      const post = await collectionPost.findOne({ _id: new ObjectId(postId) });
       const comment = post.comments.find((c) => c._id.toString() === commentId);
       if (!comment) return res.status(404).send({ error: "Comment not found" });
 
       if (comment.authorEmail !== userEmail)
         return res.status(403).send({ error: "Not authorized" });
 
-      await collectionPost .updateOne(
+      await collectionPost.updateOne(
         { _id: new ObjectId(postId), "comments._id": new ObjectId(commentId) },
         { $set: { "comments.$.text": text } }
       );
@@ -750,7 +764,7 @@ async function run() {
       const { postId, commentId } = req.params;
       const { userEmail } = req.body; // client
       try {
-        const post = await collectionPost .findOne({
+        const post = await collectionPost.findOne({
           _id: new ObjectId(postId),
         });
         if (!post) return res.status(404).send({ error: "Post not found" });
@@ -767,7 +781,7 @@ async function run() {
             .send({ error: "Not authorized to delete comment" });
         }
 
-        await collectionPost .updateOne(
+        await collectionPost.updateOne(
           { _id: new ObjectId(postId) },
           { $pull: { comments: { _id: new ObjectId(commentId) } } }
         );
@@ -783,6 +797,7 @@ async function run() {
     app.post("/socialPost/:id/comments", async (req, res) => {
       const postId = req.params.id;
       const { userName, text, authorEmail, authorPhoto } = req.body;
+      console.log(req.body);
 
       try {
         const newComment = {
@@ -790,7 +805,7 @@ async function run() {
           authorName: userName || "Unknown",
           text,
           authorEmail,
-          authorPhoto,
+          authorPhoto, //
           createdAt: new Date(),
           replies: [],
         };
