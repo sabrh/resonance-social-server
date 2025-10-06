@@ -252,7 +252,7 @@ app.get("/search/users", async (req, res) => {
 
         const newPost = {
           privacy: privacy,
-          userId: userId || userEmail, //added for userId
+          userId: userId, //added for userId
           userEmail: userEmail,
           text: text,
           userName: userName,
