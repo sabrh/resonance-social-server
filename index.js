@@ -383,7 +383,7 @@ async function run() {
       try {
         const posts = await collectionPost.find({}).toArray();
         res.send(posts);
-        console.log(posts);
+        
       } catch (err) {
         console.error(err);
         res.status(500).send({ error: "Failed to fetch posts" });
@@ -838,7 +838,7 @@ async function run() {
     app.post("/socialPost/:id/comments", async (req, res) => {
       const postId = req.params.id;
       const { userName, text, authorEmail, authorPhoto } = req.body;
-      console.log(req.body);
+      
 
       try {
         const newComment = {
