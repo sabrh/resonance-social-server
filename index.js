@@ -6,35 +6,38 @@ require("dotenv").config();
 const port = process.env.PORT || 3000;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
-// ============== Middleware ==============
 app.use(cors());
 app.use(express.json());
 
-// Multer setup (memory storage)
+// Multer setup (memory storage for now)
 const storage = multer.memoryStorage();
-const upload = multer({ storage });
+const upload = multer({ storage: storage });
 
-// ============== MongoDB Connection ==============
+// MongoDB connection
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.qk8emwu.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 const client = new MongoClient(uri, {
-  serverApi: { version: ServerApiVersion.v1, strict: true, deprecationErrors: true },
+  serverApi: {
+    version: ServerApiVersion.v1,
+    strict: true,
+    deprecationErrors: true,
+  },
 });
 
 // Root route
-app.get("/", (req, res) => res.send("Resonance server is working"));
+app.get("/", (req, res) => {
+  res.send("Resonance server is working");
+});
 
-// ============== Main Server Logic ==============
 async function run() {
   try {
     // await client.connect();
     console.log("Connected to MongoDB successfully!");
 
-    const db = client.db("createPostDB");
-    const collectionUsers = db.collection("users");
-    const collectionPost = db.collection("createPost");
+    const collectionUsers  = client.db("createPostDB").collection("users");
+    const collectionPost  = client.db("createPostDB").collection("createPost");
 
     // ============================
-    // USERS SECTION
+    // Users
     // ============================
 
     // Create user
@@ -43,7 +46,7 @@ async function run() {
         const { uid, displayName, email, photoURL } = req.body;
         if (!uid) return res.status(400).send({ error: "uid required" });
 
-        const existing = await collectionUsers.findOne({ uid });
+        const existing = await collectionUsers .findOne({ uid });
         if (existing) return res.send({ success: true, user: existing });
 
         const userDoc = {
@@ -63,10 +66,10 @@ async function run() {
           relationshipStatus: null,
         };
 
-        const result = await collectionUsers.insertOne(userDoc);
+        const result = await collectionUsers .insertOne(userDoc);
         res.send({ success: true, insertedId: result.insertedId });
       } catch (err) {
-        console.error("Create user error:", err);
+        console.error(err);
         res.status(500).send({ error: "server error" });
       }
     });
@@ -74,41 +77,53 @@ async function run() {
     // Get user by uid
     app.get("/users/:uid", async (req, res) => {
       try {
-        const user = await collectionUsers.findOne({ uid: req.params.uid });
+        const uid = req.params.uid;
+        const user = await collectionUsers .findOne({ uid });
         if (!user) return res.status(404).send({ error: "User not found" });
         res.send(user);
       } catch (err) {
-        console.error("Fetch user error:", err);
+        console.error(err);
         res.status(500).send({ error: "server error" });
       }
     });
 
     // Upload/update banner
-    app.post("/users/:uid/banner", upload.single("banner"), async (req, res) => {
-      try {
-        const uid = req.params.uid;
-        const file = req.file;
-        if (!file) return res.status(400).send({ error: "No file uploaded" });
+    app.post(
+      "/users/:uid/banner",
+      upload.single("banner"),
+      async (req, res) => {
+        try {
+          const uid = req.params.uid;
+          const file = req.file;
+          if (!file) return res.status(400).send({ error: "No file uploaded" });
 
-        const update = {
-          banner: file.buffer.toString("base64"),
-          bannerFilename: file.originalname,
-          bannerMimetype: file.mimetype,
-          updatedAt: new Date(),
-        };
+          const bannerBase64 = file.buffer.toString("base64");
+          const update = {
+            banner: bannerBase64,
+            bannerFilename: file.originalname,
+            bannerMimetype: file.mimetype,
+            updatedAt: new Date(),
+          };
 
-        await collectionUsers.updateOne({ uid }, { $set: update }, { upsert: true });
-        res.send({ success: true });
-      } catch (err) {
-        console.error("Banner upload error:", err);
-        res.status(500).send({ error: "upload failed" });
+          await collectionUsers .updateOne(
+            { uid },
+            { $set: update },
+            { upsert: true }
+          );
+          res.send({ success: true });
+        } catch (err) {
+          console.error(err);
+          res.status(500).send({ error: "upload failed" });
+        }
       }
-    });
+    );
 
     // Update user details
     app.put("/users/:uid/details", async (req, res) => {
       try {
+        const uid = req.params.uid;
         const { education, location, gender, relationshipStatus } = req.body;
+
         const update = {
           ...(education && { education }),
           ...(location && { location }),
@@ -117,88 +132,233 @@ async function run() {
           updatedAt: new Date(),
         };
 
-        const result = await collectionUsers.updateOne({ uid: req.params.uid }, { $set: update });
-        if (result.matchedCount === 0) return res.status(404).send({ error: "User not found" });
+        const result = await collectionUsers .updateOne(
+          { uid },
+          { $set: update }
+        );
 
-        res.send({ success: true, message: "User details updated successfully" });
+        if (result.matchedCount === 0)
+          return res.status(404).send({ error: "User not found" });
+
+        res.send({
+          success: true,
+          message: "User details updated successfully",
+        });
       } catch (err) {
-        console.error("Update details error:", err);
+        console.error(err);
         res.status(500).send({ error: "Failed to update details" });
       }
     });
 
-    // Follow / Unfollow
-    app.put("/users/:uid/follow", async (req, res) => {
+    // Follow / Unfollow - FIXED VERSION
+    app.put("/users/:targetUid/follow", async (req, res) => {
       try {
-        const targetUid = req.params.uid;
+        const { targetUid } = req.params;
         const { currentUid } = req.body;
-        if (!currentUid) return res.status(400).send({ error: "currentUid required" });
-
-        const targetUser = await collectionUsers.findOne({ uid: targetUid });
-        const currentUser = await collectionUsers.findOne({ uid: currentUid });
-        if (!targetUser || !currentUser)
-          return res.status(404).send({ error: "User not found" });
-
-        const isFollowing = targetUser.followers?.includes(currentUid);
-
-        if (isFollowing) {
-          await collectionUsers.updateOne({ uid: targetUid }, { $pull: { followers: currentUid } });
-          await collectionUsers.updateOne({ uid: currentUid }, { $pull: { following: targetUid } });
-        } else {
-          await collectionUsers.updateOne({ uid: targetUid }, { $addToSet: { followers: currentUid } });
-          await collectionUsers.updateOne({ uid: currentUid }, { $addToSet: { following: targetUid } });
+        
+        if (!currentUid) {
+          return res.status(400).send({ error: "currentUid required" });
         }
 
-        const updatedTarget = await collectionUsers.findOne({ uid: targetUid });
+        // Prevent self-follow
+        if (targetUid === currentUid) {
+          return res.status(400).send({ error: "Cannot follow yourself" });
+        }
+
+        const targetUser = await collectionUsers .findOne({ uid: targetUid });
+        const currentUser = await collectionUsers .findOne({ uid: currentUid });
+        
+        if (!targetUser || !currentUser) {
+          return res.status(404).send({ error: "User not found" });
+        }
+
+        const isCurrentlyFollowing = targetUser.followers?.includes(currentUid) || false;
+
+        if (isCurrentlyFollowing) {
+          // UNFOLLOW
+          await collectionUsers .updateOne(
+            { uid: targetUid },
+            { $pull: { followers: currentUid } }
+          );
+          await collectionUsers .updateOne(
+            { uid: currentUid },
+            { $pull: { following: targetUid } }
+          );
+        } else {
+          // FOLLOW
+          await collectionUsers .updateOne(
+            { uid: targetUid },
+            { 
+              $addToSet: { followers: currentUid },
+              $set: { updatedAt: new Date() }
+            }
+          );
+          await collectionUsers .updateOne(
+            { uid: currentUid },
+            { 
+              $addToSet: { following: targetUid },
+              $set: { updatedAt: new Date() }
+            }
+          );
+        }
+
+        // Get updated counts
+        const updatedTarget = await collectionUsers .findOne({ uid: targetUid });
+        const updatedCurrent = await collectionUsers .findOne({ uid: currentUid });
+
         res.send({
           success: true,
-          isFollowing: !isFollowing,
-          followersCount: updatedTarget.followers.length,
+          isFollowing: !isCurrentlyFollowing,
+          followersCount: updatedTarget.followers?.length || 0,
+          followingCount: updatedCurrent.following?.length || 0
         });
       } catch (err) {
-        console.error("Follow/unfollow error:", err);
+        console.error(err);
         res.status(500).send({ error: "Follow/unfollow failed" });
       }
     });
 
+    // Newsfeed with proper privacy logic - FIXED VERSION
+    app.get("/feed/:uid", async (req, res) => {
+      try {
+        const { uid } = req.params;
+
+        const currentUser = await collectionUsers .findOne({ uid });
+        if (!currentUser) return res.status(404).send({ error: "User not found" });
+
+        // Get following list or empty array if none
+        const following = currentUser.following || [];
+        
+        // Fetch posts with proper privacy logic
+        const posts = await collectionPost 
+          .find({
+            $or: [
+              { userId: uid }, // User's own posts (all privacy levels)
+              { 
+                userId: { $in: following }, // Following users' posts
+                $or: [
+                  { privacy: "public" },
+                  { privacy: "private" } // Can see private posts of followed users
+                ]
+              },
+              { 
+                userId: { $nin: [...following, uid] }, // Non-followed users
+                privacy: "public" // Only public posts
+              }
+            ]
+          })
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.send(posts);
+      } catch (err) {
+        console.error("Feed error:", err);
+        res.status(500).send({ error: "Failed to load feed", details: err.message });
+      }
+    });
+
+    // Profile posts with privacy logic - FIXED VERSION
+    app.get("/users/:targetUid/posts", async (req, res) => {
+      try {
+        const { targetUid } = req.params;
+        const { viewerUid } = req.query;
+
+        const targetUser = await collectionUsers .findOne({ uid: targetUid });
+        if (!targetUser) return res.status(404).send({ error: "User not found" });
+
+        let query = { userId: targetUid }; // Use userId to match your Post schema
+
+        // If viewer is not the target user AND not following, show only public posts
+        if (viewerUid && viewerUid !== targetUid) {
+          const isFollowing = targetUser.followers?.includes(viewerUid) || false;
+          if (!isFollowing) {
+            query.privacy = "public";
+          }
+        }
+
+        const userPosts = await collectionPost 
+          .find(query)
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.send(userPosts);
+      } catch (err) {
+        console.error("Profile posts error:", err);
+        res.status(500).send({ error: "Failed to load profile posts", details: err.message });
+      }
+    });
+
+    // Search Users
+    app.get("/search/users", async (req, res) => {
+      try {
+        const query = req.query.q; // get search text from ?q=
+        if (!query) return res.status(400).send({ error: "Query required" });
+
+        // Search users by name or email (case-insensitive)
+        const results = await collectionUsers 
+          .find({
+            $or: [
+              { displayName: { $regex: query, $options: "i" } },
+              { email: { $regex: query, $options: "i" } },
+            ],
+          })
+          .project({ uid: 1, displayName: 1, email: 1, photoURL: 1, followers: 1, following: 1 })
+          .limit(10)
+          .toArray();
+
+        res.send(results);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to search users" });
+      }
+    });
+
     // ============================
-    // POSTS SECTION
+    // Posts
     // ============================
 
     // Create a post
     app.post("/socialPost", upload.single("photo"), async (req, res) => {
       try {
-        const { text, privacy, userName, userPhoto, userEmail } = req.body;
+        const { text, privacy, userName, userPhoto, userEmail, userId } = req.body;
         const file = req.file;
+        const time = new Date().toLocaleTimeString("en-US", {
+          timeZone: "Asia/Dhaka",
+        });
+        const date = new Date().toLocaleDateString("en-US", {
+          timeZone: "Asia/Dhaka",
+          day: "2-digit",
+          month: "long",
+        });
 
         const newPost = {
-          privacy,
-          userEmail,
-          text,
-          userName,
-          userPhoto,
+          privacy: privacy || "public", // Ensure privacy field exists
+          userId: userId || userEmail,
+          userEmail: userEmail,
+          text: text,
+          userName: userName,
+          userPhoto: userPhoto,
           image: file ? file.buffer.toString("base64") : null,
           filename: file?.originalname,
           mimetype: file?.mimetype,
           likes: [],
           comments: [],
-          shares: [],
-          createdAt: new Date(), // ✅ store as Date object for sorting
+          createdAt: time + " - " + date,
           sharedPost: null,
         };
 
-        const result = await collectionPost.insertOne(newPost);
+        const result = await collectionPost .insertOne(newPost);
         res.send({ success: true, insertedId: result.insertedId });
       } catch (err) {
-        console.error("Create post error:", err);
+        console.error(err);
         res.status(500).send({ error: "Failed to create post" });
       }
     });
 
-    // Get all posts
+    // Get all posts (for debugging - consider removing in production)
     app.get("/socialPost", async (req, res) => {
       try {
-        const posts = await collectionPost.find({}).toArray();
+        const posts = await collectionPost .find({}).toArray();
         res.send(posts);
       } catch (err) {
         console.error(err);
@@ -206,106 +366,101 @@ async function run() {
       }
     });
 
-    // Get all posts with sharedPostData
-    // app.get("/socialPost", async (req, res) => {
-    //   try {
-    //     const posts = await collectionPost
-    //       .aggregate([
-    //         {
-    //           $lookup: {
-    //             from: "createPost",
-    //             localField: "sharedPost",
-    //             foreignField: "_id",
-    //             as: "sharedPostData",
-    //           },
-    //         },
-    //         {
-    //           $unwind: {
-    //             path: "$sharedPostData",
-    //             preserveNullAndEmptyArrays: true,
-    //           },
-    //         },
-    //         { $sort: { createdAt: -1 } },
-    //         {
-    //           $project: {
-    //             privacy:1,
-    //             text: 1,
-    //             image: 1,
-    //             mimetype: 1,
-    //             filename: 1,
-    //             likes: 1,
-    //             shares: 1,
-    //             comments: 1,
-    //             userName: 1,
-    //             userPhoto: 1,
-    //             userEmail: 1,
-    //             createdAt: 1,
-    //             sharedPostData: {
-    //               userName: 1,
-    //               userPhoto: 1,
-    //               text: 1,
-    //               image: 1,
-    //               mimetype: 1,
-    //               filename: 1,
-    //               createdAt: 1,
-    //               //  createdAt: "$sharedPostData.createdAt"  // ✅ include this
-    //             },
-    //           },
-    //         },
-    //       ])
-    //       .toArray();
-
-    //     res.send(posts);
-    //   } catch (err) {
-    //     console.error(err);
-    //     res.status(500).send({ error: "Failed to fetch posts" });
-    //   }
-    // });
-
     // Delete post
     app.delete("/socialPost/:id", async (req, res) => {
+      const postId = req.params.id;
       try {
-        const result = await collectionPost.deleteOne({ _id: new ObjectId(req.params.id) });
-        if (result.deletedCount === 0) return res.status(404).send({ message: "Post not found" });
-        res.send({ success: true, deletedId: req.params.id });
+        const result = await collectionPost .deleteOne({
+          _id: new ObjectId(postId),
+        });
+        if (result.deletedCount === 0)
+          return res.status(404).send({ message: "Post not found" });
+        res.send({ success: true, deletedId: postId });
       } catch (err) {
-        console.error("Delete post error:", err);
+        console.error(err);
         res.status(500).send({ error: "Failed to delete post" });
       }
     });
 
-    // Like / Unlike post
+    // Like/unlike a post
     app.put("/socialPost/:id/like", async (req, res) => {
+      const postId = req.params.id;
+      const { userId } = req.body;
+
       try {
-        const postId = req.params.id;
-        const { userId } = req.body;
-        const post = await collectionPost.findOne({ _id: new ObjectId(postId) });
+        const post = await collectionPost .findOne({
+          _id: new ObjectId(postId),
+        });
         if (!post) return res.status(404).send({ message: "Post not found" });
 
         const likes = post.likes || [];
-        const updatedLikes = likes.includes(userId)
-          ? likes.filter((id) => id !== userId)
-          : [...likes, userId];
+        let updatedLikes;
 
-        await collectionPost.updateOne({ _id: new ObjectId(postId) }, { $set: { likes: updatedLikes } });
-        res.send({ liked: updatedLikes.includes(userId), likesCount: updatedLikes.length });
+        if (likes.includes(userId)) {
+          updatedLikes = likes.filter((id) => id !== userId);
+        } else {
+          updatedLikes = [...likes, userId];
+        }
+
+        await collectionPost .updateOne(
+          { _id: new ObjectId(postId) },
+          { $set: { likes: updatedLikes } }
+        );
+
+        res.send({
+          liked: updatedLikes.includes(userId),
+          likesCount: updatedLikes.length,
+        });
       } catch (err) {
-        console.error("Like error:", err);
+        console.error(err);
         res.status(500).send({ error: "Failed to update like" });
       }
     });
 
-    // Share post
+    // Get users who liked a post
+    app.get("/socialPost/:id/likes", async (req, res) => {
+      const postId = req.params.id;
+      try {
+        const post = await collectionPost .findOne({
+          _id: new ObjectId(postId),
+        });
+        if (!post) return res.status(404).send({ error: "Post not found" });
+
+        const likes = post.likes || [];
+
+        const users = await collectionUsers 
+          .find({ uid: { $in: likes } })
+          .project({ uid: 1, displayName: 1, photoURL: 1 })
+          .toArray();
+
+        // Remove duplicates (just in case)
+        const uniqueUsers = Array.from(
+          new Map(users.map((u) => [u.uid, u])).values()
+        );
+
+        res.send(uniqueUsers);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to fetch like users" });
+      }
+    });
+
+    // Share a post
     app.post("/socialPost/:id/share", async (req, res) => {
       try {
         const { id } = req.params;
         const { userId, userName, userPhoto, text } = req.body;
 
-        const originalPost = await collectionPost.findOne({ _id: new ObjectId(id) });
-        if (!originalPost) return res.status(404).send({ error: "Original post not found" });
+        const originalPost = await collectionPost .findOne({
+          _id: new ObjectId(id),
+        });
+
+        if (!originalPost) {
+          return res.status(404).send({ error: "Original post not found" });
+        }
 
         const newPost = {
-          userEmail: originalPost.userEmail,
+          userId,
           userName,
           userPhoto,
           text: text || "",
@@ -313,54 +468,351 @@ async function run() {
           comments: [],
           shares: [],
           createdAt: new Date(),
-          sharedPost: originalPost._id,
+          sharedPost: originalPost._id, // original post reference
         };
 
-        const result = await collectionPost.insertOne(newPost);
-        await collectionPost.updateOne(
+        const result = await collectionPost .insertOne(newPost);
+
+        await collectionPost .updateOne(
           { _id: originalPost._id },
-          { $push: { shares: { userId, userName, userPhoto, sharedAt: new Date() } } }
+          {
+            $push: {
+              shares: { userId, userName, userPhoto, sharedAt: new Date() },
+            },
+          }
         );
 
-        const updatedPost = await collectionPost.findOne({ _id: originalPost._id });
-        res.send({
-          success: true,
-          insertedId: result.insertedId,
-          sharesCount: updatedPost.shares?.length || 0,
+        const insertedPost = await collectionPost .findOne({
+          _id: result.insertedId,
         });
+
+        const populatedPost = {
+          ...insertedPost,
+          sharedPost: {
+            userName: originalPost.userName,
+            userPhoto: originalPost.userPhoto,
+            text: originalPost.text,
+            image: originalPost.image,
+            mimetype: originalPost.mimetype,
+            filename: originalPost.filename,
+            createdAt: originalPost.createdAt,
+          },
+        };
+
+        res.send({ success: true, post: populatedPost });
       } catch (err) {
-        console.error("Share error:", err);
+        console.error(err);
         res.status(500).send({ error: "Failed to share post" });
       }
     });
 
-    // Add comment
-    app.post("/socialPost/:id/comments", async (req, res) => {
+    // Add reply (top-level or nested)
+    app.post("/socialPost/:postId/replies", async (req, res) => {
+      const { postId } = req.params;
+      const { commentId, authorPhoto, parentReplyId, authorName, authorEmail, text } = req.body;
+
       try {
-        const { userName, text } = req.body;
+        const post = await collectionPost .findOne({
+          _id: new ObjectId(postId),
+        });
+        if (!post) return res.status(404).send({ error: "Post not found" });
+
+        const newReply = {
+          _id: new ObjectId(),
+          authorName,
+          authorEmail,
+          authorPhoto,
+          text,
+          createdAt: new Date(),
+          replies: [],
+        };
+
+        if (parentReplyId) {
+          // Nested reply
+          post.comments = addNestedReply(
+            post.comments,
+            commentId,
+            parentReplyId,
+            newReply
+          );
+        } else {
+          // Top-level reply
+          post.comments = post.comments.map((c) =>
+            c._id.toString() === commentId
+              ? { ...c, replies: [...(c.replies || []), newReply] }
+              : c
+          );
+        }
+
+        await collectionPost .updateOne(
+          { _id: new ObjectId(postId) },
+          { $set: { comments: post.comments } }
+        );
+
+        res.send({ success: true, reply: newReply });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to add reply" });
+      }
+    });
+
+    // Recursive function to add nested reply
+    function addNestedReply(comments, commentId, parentReplyId, newReply) {
+      return comments.map((c) => {
+        if (c._id.toString() === commentId) {
+          return {
+            ...c,
+            replies: addNestedReplyRecursive(
+              c.replies || [],
+              parentReplyId,
+              newReply
+            ),
+          };
+        }
+        return c;
+      });
+    }
+
+    function addNestedReplyRecursive(replies, targetId, newReply) {
+      return replies.map((r) => {
+        if (r._id.toString() === targetId.toString()) {
+          return { ...r, replies: [...(r.replies || []), newReply] };
+        }
+        return {
+          ...r,
+          replies: addNestedReplyRecursive(r.replies || [], targetId, newReply),
+        };
+      });
+    }
+
+    // DELETE a reply (top-level or nested) from a post
+    app.delete("/socialPost/:postId/replies/:replyId", async (req, res) => {
+      const { postId, replyId } = req.params;
+
+      try {
+        const post = await collectionPost .findOne({
+          _id: new ObjectId(postId),
+        });
+        if (!post) return res.status(404).send({ error: "Post not found" });
+
+        // Recursively delete reply
+        const updatedComments = deleteReplyRecursive(post.comments, replyId);
+
+        await collectionPost .updateOne(
+          { _id: new ObjectId(postId) },
+          { $set: { comments: updatedComments } }
+        );
+
+        res.send({ success: true });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to delete reply" });
+      }
+    });
+
+    // Recursive function to delete nested reply
+    function deleteReplyRecursive(comments, targetId) {
+      return comments
+        .filter((c) => c._id.toString() !== targetId.toString())
+        .map((c) => ({
+          ...c,
+          replies: c.replies ? deleteReplyRecursive(c.replies, targetId) : [],
+        }));
+    }
+
+    function updateReplyRecursive(comments, targetId, newText, authorEmail) {
+      return comments.map((c) => {
+        if (c._id.toString() === targetId.toString()) {
+          if (c.authorEmail === authorEmail) {
+            return { ...c, text: newText };
+          }
+          return c;
+        }
+        if (c.replies && c.replies.length > 0) {
+          return {
+            ...c,
+            replies: updateReplyRecursive(
+              c.replies,
+              targetId,
+              newText,
+              authorEmail
+            ),
+          };
+        }
+        return c;
+      });
+    }
+
+    app.post("/socialPost/:postId/replies/:replyId", async (req, res) => {
+      const { postId, replyId } = req.params;
+      const { text, authorName, authorEmail, authorPhoto } = req.body;
+
+      try {
+        const post = await collectionPost .findOne({
+          _id: new ObjectId(postId),
+        });
+        if (!post) return res.status(404).send({ error: "Post not found" });
+
+        const newReply = {
+          _id: new ObjectId(),
+          authorName,
+          authorEmail,
+          authorPhoto,
+          text,
+          createdAt: new Date(),
+          replies: [],
+        };
+
+        const updatedComments = addReplyRecursive(
+          post.comments,
+          replyId,
+          newReply
+        );
+
+        await collectionPost .updateOne(
+          { _id: new ObjectId(postId) },
+          { $set: { comments: updatedComments } }
+        );
+
+        res.status(201).send({ reply: newReply });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to add nested reply" });
+      }
+    });
+
+    function addReplyRecursive(comments, targetId, newReply) {
+      return comments.map((c) => {
+        if (c._id.toString() === targetId.toString()) {
+          return { ...c, replies: [...(c.replies || []), newReply] };
+        }
+        if (c.replies && c.replies.length > 0) {
+          return {
+            ...c,
+            replies: addReplyRecursive(c.replies, targetId, newReply),
+          };
+        }
+        return c;
+      });
+    }
+
+    app.put("/socialPost/:postId/replies/:replyId", async (req, res) => {
+      const { postId, replyId } = req.params;
+      const { text, authorEmail } = req.body;
+
+      try {
+        const post = await collectionPost .findOne({
+          _id: new ObjectId(postId),
+        });
+        if (!post) return res.status(404).send({ error: "Post not found" });
+
+        const updatedComments = updateReplyRecursive(
+          post.comments,
+          replyId,
+          text,
+          authorEmail
+        );
+
+        await collectionPost .updateOne(
+          { _id: new ObjectId(postId) },
+          { $set: { comments: updatedComments } }
+        );
+
+        res.send({ success: true });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to edit reply" });
+      }
+    });
+
+    // Edit Comment
+    app.put("/socialPost/:postId/comment/:commentId", async (req, res) => {
+      const { postId, commentId } = req.params;
+      const { text, userEmail } = req.body;
+
+      const post = await collectionPost .findOne({ _id: new ObjectId(postId) });
+      const comment = post.comments.find((c) => c._id.toString() === commentId);
+      if (!comment) return res.status(404).send({ error: "Comment not found" });
+
+      if (comment.authorEmail !== userEmail)
+        return res.status(403).send({ error: "Not authorized" });
+
+      await collectionPost .updateOne(
+        { _id: new ObjectId(postId), "comments._id": new ObjectId(commentId) },
+        { $set: { "comments.$.text": text } }
+      );
+
+      res.send({ success: true });
+    });
+
+    // Delete comment
+    app.delete("/socialPost/:postId/comment/:commentId", async (req, res) => {
+      const { postId, commentId } = req.params;
+      const { userEmail } = req.body; // client
+      try {
+        const post = await collectionPost .findOne({
+          _id: new ObjectId(postId),
+        });
+        if (!post) return res.status(404).send({ error: "Post not found" });
+
+        const comment = post.comments.find(
+          (c) => c._id.toString() === commentId
+        );
+        if (!comment)
+          return res.status(404).send({ error: "Comment not found" });
+
+        if (comment.authorEmail !== userEmail && post.userEmail !== userEmail) {
+          return res
+            .status(403)
+            .send({ error: "Not authorized to delete comment" });
+        }
+
+        await collectionPost .updateOne(
+          { _id: new ObjectId(postId) },
+          { $pull: { comments: { _id: new ObjectId(commentId) } } }
+        );
+
+        res.send({ success: true, deletedId: commentId });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to delete comment" });
+      }
+    });
+
+    // Add comment to post
+    app.post("/socialPost/:id/comments", async (req, res) => {
+      const postId = req.params.id;
+      const { userName, text, authorEmail, authorPhoto } = req.body;
+
+      try {
         const newComment = {
           _id: new ObjectId(),
           authorName: userName || "Unknown",
           text,
+          authorEmail,
+          authorPhoto,
           createdAt: new Date(),
+          replies: [],
         };
 
-        await collectionPost.updateOne(
-          { _id: new ObjectId(req.params.id) },
+        await collectionPost .updateOne(
+          { _id: new ObjectId(postId) },
           { $push: { comments: newComment } }
         );
 
         res.status(201).send({ comment: newComment });
       } catch (err) {
-        console.error("Comment error:", err);
+        console.error(err);
         res.status(500).send({ error: "Failed to add comment" });
       }
     });
   } catch (err) {
-    console.error("Server startup error:", err);
+    console.error(err);
   }
 }
 
 run().catch(console.dir);
 
-app.listen(port, () => console.log(`Server running on port ${port}`));
+app.listen(port, () => {
+  console.log(`Server is running on port ${port}`);
+});
