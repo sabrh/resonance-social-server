@@ -332,8 +332,8 @@ async function run() {
         });
 
         const newPost = {
-          privacy: privacy || "public", // Ensure privacy field exists
-          userId: userId || userEmail,
+          privacy: privacy,
+          userId: userId, //added for userId
           userEmail: userEmail,
           text: text,
           userName: userName,
@@ -430,7 +430,13 @@ async function run() {
         const users = await collectionUsers
           .find({ uid: { $in: likes } })
           .project({ uid: 1, displayName: 1, photoURL: 1 })
-          .toArray();
+          .toArray(); 
+          res.send(users);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to fetch like users" });
+      }
+    }); 
 
     // Get users who liked a post
     app.get("/socialPost/:id/likes", async (req, res) => {
