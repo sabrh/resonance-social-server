@@ -320,7 +320,7 @@ async function run() {
     // Create a post
     app.post("/socialPost", upload.single("photo"), async (req, res) => {
       try {
-        const { text, privacy, userName, userPhoto, userEmail, userId } = req.body;
+        const { text, privacy, userName, userPhoto, userEmail, userId ,shared, sharedUserName,sharedUserPhoto, sharedUserText,sharedUserId } = req.body;
         const file = req.file;
         const time = new Date().toLocaleTimeString("en-US", {
           timeZone: "Asia/Dhaka",
@@ -338,6 +338,11 @@ async function run() {
           text: text,
           userName: userName,
           userPhoto: userPhoto,
+          shared:shared,
+          sharedUserName:sharedUserName,
+          sharedUserPhoto:sharedUserPhoto,
+          sharedUserText:sharedUserText,
+          sharedUserId:sharedUserId,
           image: file ? file.buffer.toString("base64") : null,
           filename: file?.originalname,
           mimetype: file?.mimetype,
