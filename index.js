@@ -35,7 +35,11 @@ async function run() {
 
     const collectionUsers = client.db("createPostDB").collection("users");
     const collectionPost = client.db("createPostDB").collection("createPost");
-    const collectionNotifications = client.db("createPostDB").collection("notifications"); // NEW: Notifications collection
+    const collectionNotifications = client.db("createPostDB").collection("notifications"); 
+    const collectionStory = client.db("createStoryDB").collection("story");
+    
+
+    // NEW: Notifications collection
 
     // ============================
     // Helper Functions
@@ -1112,6 +1116,68 @@ async function run() {
         res.status(500).send({ error: "Failed to add comment" });
       }
     });
+
+
+  // for story section ......................................................................
+
+  app.post("/story", upload.single("photo"), async (req, res) => {
+      try {
+        const {  userName, userPhoto,  userId } = req.body;
+        const file = req.file;
+        const time = new Date().toLocaleTimeString("en-US", {
+          timeZone: "Asia/Dhaka",
+        });
+        
+
+        const newStory = {
+          userId: userId, //added for userId
+          userName: userName,
+          userPhoto: userPhoto,
+          image: file ? file.buffer.toString("base64") : null,
+          filename: file?.originalname,
+          mimetype: file?.mimetype,
+          likes: [],
+          createdAt: time ,
+        };
+
+        const result = await collectionStory.insertOne(newStory);
+        res.send({ success: true, insertedId: result.insertedId });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to create story" });
+      }
+    });
+
+    // Get all posts (for debugging - consider removing in production)
+    app.get("/story", async (req, res) => {
+      try {
+        const posts = await collectionStory.find({}).toArray();
+        res.send(posts);
+
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to fetch posts" });
+      }
+    });
+
+    // Delete post
+    app.delete("/story/:id", async (req, res) => {
+      const postId = req.params.id;
+      try {
+        const result = await collectionStory.deleteOne({
+          _id: new ObjectId(postId),
+        });
+        if (result.deletedCount === 0)
+          return res.status(404).send({ message: "Post not found" });
+        res.send({ success: true, deletedId: postId });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to delete post" });
+      }
+    });
+
+
+
   } catch (err) {
     console.error(err);
   }
