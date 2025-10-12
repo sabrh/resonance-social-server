@@ -37,7 +37,10 @@ async function run() {
     const collectionPost = client.db("createPostDB").collection("createPost");
     const collectionNotifications = client.db("createPostDB").collection("notifications"); 
     const collectionStory = client.db("createStoryDB").collection("story");
-    
+
+    // delete story auto
+
+  //  await collectionStory.createIndex({ time: 1 }, { expireAfterSeconds: 86400 });
 
     // NEW: Notifications collection
 
@@ -1127,6 +1130,7 @@ async function run() {
         const time = new Date().toLocaleTimeString("en-US", {
           timeZone: "Asia/Dhaka",
         });
+        const timeC = new Date();
         
 
         const newStory = {
@@ -1138,6 +1142,7 @@ async function run() {
           mimetype: file?.mimetype,
           likes: [],
           createdAt: time ,
+          time:timeC,
         };
 
         const result = await collectionStory.insertOne(newStory);
