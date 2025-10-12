@@ -35,6 +35,71 @@ async function run() {
 
     const collectionUsers = client.db("createPostDB").collection("users");
     const collectionPost = client.db("createPostDB").collection("createPost");
+    const collectionNotifications = client.db("createPostDB").collection("notifications"); 
+    const collectionStory = client.db("createStoryDB").collection("story");
+
+    // delete story auto
+
+  //  await collectionStory.createIndex({ time: 1 }, { expireAfterSeconds: 86400 });
+
+    // NEW: Notifications collection
+
+    // ============================
+    // Helper Functions
+    // ============================
+
+    // Generate notification message
+    function generateNotificationMessage(type, senderName, commentText = "") {
+      switch (type) {
+        case 'like':
+          return `${senderName} liked your post`;
+        case 'comment':
+          return `${senderName} commented on your post`;
+        case 'reply':
+          return `${senderName} replied to your comment`;
+        default:
+          return `${senderName} interacted with your post`;
+      }
+    }
+
+    // Create notification function
+    async function createNotification(notificationData) {
+      try {
+        const {
+          recipientId,
+          senderId,
+          senderName,
+          senderPhoto,
+          postId,
+          postText,
+          type,
+          commentText
+        } = notificationData;
+
+        // Don't create notification if user is interacting with their own post
+        if (recipientId === senderId) return;
+
+        const message = generateNotificationMessage(type, senderName, commentText);
+
+        const notification = {
+          recipientId,
+          senderId,
+          senderName,
+          senderPhoto,
+          postId,
+          postText: postText ? postText.substring(0, 100) : "",
+          type,
+          message,
+          commentText: commentText || "",
+          isRead: false,
+          createdAt: new Date()
+        };
+
+        await collectionNotifications.insertOne(notification);
+      } catch (err) {
+        console.error("Error creating notification:", err);
+      }
+    }
 
     // ============================
     // Users
@@ -201,6 +266,18 @@ async function run() {
               $set: { updatedAt: new Date() },
             }
           );
+
+          // NEW: Create follow notification
+          await createNotification({
+            recipientId: targetUid,
+            senderId: currentUid,
+            senderName: currentUser.displayName,
+            senderPhoto: currentUser.photoURL,
+            postId: null,
+            postText: "",
+            type: 'follow',
+            commentText: ""
+          });
         }
 
         // Get updated counts
@@ -332,13 +409,86 @@ async function run() {
     });
 
     // ============================
+    // NEW: Notifications APIs
+    // ============================
+
+    // Get notifications for a user
+    app.get("/notifications/:userId", async (req, res) => {
+      try {
+        const { userId } = req.params;
+
+        const notifications = await collectionNotifications
+          .find({ recipientId: userId })
+          .sort({ createdAt: -1 })
+          .limit(50)
+          .toArray();
+
+        res.send(notifications);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to fetch notifications" });
+      }
+    });
+
+    // Mark notification as read
+    app.put("/notifications/:notificationId/read", async (req, res) => {
+      try {
+        const { notificationId } = req.params;
+
+        await collectionNotifications.updateOne(
+          { _id: new ObjectId(notificationId) },
+          { $set: { isRead: true } }
+        );
+
+        res.send({ success: true });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to mark notification as read" });
+      }
+    });
+
+    // Mark all notifications as read
+    app.put("/notifications/:userId/read-all", async (req, res) => {
+      try {
+        const { userId } = req.params;
+
+        await collectionNotifications.updateMany(
+          { recipientId: userId, isRead: false },
+          { $set: { isRead: true } }
+        );
+
+        res.send({ success: true });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to mark notifications as read" });
+      }
+    });
+
+    // Get unread notification count
+    app.get("/notifications/:userId/unread-count", async (req, res) => {
+      try {
+        const { userId } = req.params;
+
+        const count = await collectionNotifications.countDocuments({
+          recipientId: userId,
+          isRead: false
+        });
+
+        res.send({ count });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to get unread count" });
+      }
+    });
+
+    // ============================
     // Posts
     // ============================
 
     // Create a post
     app.post("/socialPost", upload.single("photo"), async (req, res) => {
       try {
-        const { text, privacy, userName, userPhoto, userEmail, userId ,shared, sharedUserName,sharedUserPhoto, sharedUserText,sharedUserId } = req.body;
+        const { text, privacy, userName, userPhoto, userEmail, userId, shared, sharedUserName, sharedUserPhoto, sharedUserText, sharedUserId } = req.body;
         const file = req.file;
         const time = new Date().toLocaleTimeString("en-US", {
           timeZone: "Asia/Dhaka",
@@ -356,11 +506,11 @@ async function run() {
           text: text,
           userName: userName,
           userPhoto: userPhoto,
-          shared:shared,
-          sharedUserName:sharedUserName,
-          sharedUserPhoto:sharedUserPhoto,
-          sharedUserText:sharedUserText,
-          sharedUserId:sharedUserId,
+          shared: shared,
+          sharedUserName: sharedUserName,
+          sharedUserPhoto: sharedUserPhoto,
+          sharedUserText: sharedUserText,
+          sharedUserId: sharedUserId,
           image: file ? file.buffer.toString("base64") : null,
           filename: file?.originalname,
           mimetype: file?.mimetype,
@@ -383,7 +533,7 @@ async function run() {
       try {
         const posts = await collectionPost.find({}).toArray();
         res.send(posts);
-        
+
       } catch (err) {
         console.error(err);
         res.status(500).send({ error: "Failed to fetch posts" });
@@ -406,7 +556,7 @@ async function run() {
       }
     });
 
-    // Like/unlike a post
+    // Like/unlike a post - UPDATED WITH NOTIFICATION
     app.put("/socialPost/:id/like", async (req, res) => {
       const postId = req.params.id;
       const { userId } = req.body;
@@ -424,6 +574,20 @@ async function run() {
           updatedLikes = likes.filter((id) => id !== userId);
         } else {
           updatedLikes = [...likes, userId];
+
+          // NEW: Create like notification (only when liking, not unliking)
+          if (post.userId !== userId) { // Don't notify if user likes their own post
+            await createNotification({
+              recipientId: post.userId,
+              senderId: userId,
+              senderName: req.body.senderName, // Client should send this
+              senderPhoto: req.body.senderPhoto, // Client should send this
+              postId: postId,
+              postText: post.text,
+              type: 'like',
+              commentText: ""
+            });
+          }
         }
 
         await collectionPost.updateOne(
@@ -440,57 +604,118 @@ async function run() {
         res.status(500).send({ error: "Failed to update like" });
       }
     });
-    // app.get("/socialPost/:id/likes", async (req, res) => {
-    //   const postId = req.params.id;
-    //   try {
-    //     const post = await collectionPost.findOne({
-    //       _id: new ObjectId(postId),
-    //     });
-    //     if (!post) return res.status(404).send({ error: "Post not found" });
+   app.get("/socialPost/:id/likes", async (req, res) => {
+  const postId = req.params.id;
+  try {
+    const post = await collectionPost.findOne({
+      _id: new ObjectId(postId),
+    });
+    if (!post) return res.status(404).send({ error: "Post not found" });
 
-    //     const likes = post.likes || [];
+    const likes = post.likes || [];
 
-    //     const users = await collectionUsers
-    //       .find({ uid: { $in: likes } })
-    //       .project({ uid: 1, displayName: 1, photoURL: 1 })
-    //       .toArray();
-    //     res.send(users);
-    //   } catch (err) {
-    //     console.error(err);
-    //     res.status(500).send({ error: "Failed to fetch like users" });
-    //   }
-    // });
+    const users = await collectionUsers
+      .find({ uid: { $in: likes } })
+      .project({ uid: 1, displayName: 1, photoURL: 1 })
+      .toArray();
 
-    // Get users who liked a post
-    app.get("/socialPost/:id/likes", async (req, res) => {
-      const postId = req.params.id;
+    // ✅ remove duplicate users (based on uid)
+    const uniqueUsers = Array.from(
+      new Map(users.map((u) => [u.uid, u])).values()
+    );
+
+    res.send(uniqueUsers);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ error: "Failed to fetch like users" });
+  }
+});
+
+
+
+    // server.js - notifications collection এ এই API টি যোগ করুন
+
+    // Create notification
+    // server.js - notifications collection এ এই API টি নিশ্চিত করুন
+    app.post("/notifications", async (req, res) => {
       try {
-        const post = await collectionPost.findOne({
-          _id: new ObjectId(postId),
-        });
-        if (!post) return res.status(404).send({ error: "Post not found" });
+        const {
+          recipientId,
+          senderId,
+          senderName,
+          senderPhoto,
+          postId,
+          postText,
+          type,
+          commentText
+        } = req.body;
 
-        const likes = post.likes || [];
+        // Don't create notification if user is interacting with their own post
+        if (recipientId === senderId) {
+          return res.send({ success: true, message: "Self notification skipped" });
+        }
 
-        const users = await collectionUsers
-          .find({ uid: { $in: likes } })
-          .project({ uid: 1, displayName: 1, photoURL: 1 })
-          .toArray();
+        const message = generateNotificationMessage(type, senderName, commentText);
 
-        // Remove duplicates (just in case)
-        const uniqueUsers = Array.from(
-          new Map(users.map((u) => [u.uid, u])).values()
-        );
+        const notification = {
+          recipientId,
+          senderId,
+          senderName,
+          senderPhoto,
+          postId,
+          postText: postText ? postText.substring(0, 100) : "",
+          type,
+          message,
+          commentText: commentText || "",
+          isRead: false,
+          createdAt: new Date()
+        };
 
-        res.send(uniqueUsers);
+        const result = await collectionNotifications.insertOne(notification);
+        res.send({ success: true, notification: { ...notification, _id: result.insertedId } });
       } catch (err) {
-        console.error(err);
-        res.status(500).send({ error: "Failed to fetch like users" });
+        console.error("Error creating notification:", err);
+        res.status(500).send({ error: "Failed to create notification" });
       }
     });
 
+    // Helper function
+    function generateNotificationMessage(type, senderName, commentText = "") {
+      switch (type) {
+        case 'like':
+          return `${senderName} liked your post`;
+        case 'comment':
+          return `${senderName} commented on your post`;
+        case 'reply':
+          return `${senderName} replied to your comment`;
+        case 'follow':
+          return `${senderName} started following you`;
+        case 'share':
+          return `${senderName} shared your post`;
+        default:
+          return `${senderName} interacted with your post`;
+      }
+    }
+
+    // Helper function (যদি আগে থেকে না থাকে)
+    function generateNotificationMessage(type, senderName, commentText = "") {
+      switch (type) {
+        case 'like':
+          return `${senderName} liked your post`;
+        case 'comment':
+          return `${senderName} commented on your post`;
+        case 'reply':
+          return `${senderName} replied to your comment`;
+        case 'follow':
+          return `${senderName} started following you`;
+        case 'share':
+          return `${senderName} shared your post`;
+        default:
+          return `${senderName} interacted with your post`;
+      }
+    }
+
     // Share a post
-    // Share handler
     app.post("/socialPost/:id/share", async (req, res) => {
       try {
         const { id } = req.params;
@@ -527,6 +752,20 @@ async function run() {
           }
         );
 
+        // NEW: Create share notification
+        if (originalPost.userId !== userId) {
+          await createNotification({
+            recipientId: originalPost.userId,
+            senderId: userId,
+            senderName: userName,
+            senderPhoto: userPhoto,
+            postId: id,
+            postText: originalPost.text,
+            type: 'share',
+            commentText: ""
+          });
+        }
+
         const insertedPost = await collectionPost.findOne({
           _id: result.insertedId,
         });
@@ -550,7 +789,8 @@ async function run() {
         res.status(500).send({ error: "Failed to share post" });
       }
     });
-    // Add reply (top-level or nested)
+
+    // Add reply (top-level or nested) - UPDATED WITH NOTIFICATION
     app.post("/socialPost/:postId/replies", async (req, res) => {
       const { postId } = req.params;
       const {
@@ -599,6 +839,25 @@ async function run() {
           { _id: new ObjectId(postId) },
           { $set: { comments: post.comments }, $inc: { commentCount: 1 } }
         );
+
+        // NEW: Create reply notification
+        // Find the comment author to notify them
+        const originalComment = post.comments.find(c => c._id.toString() === commentId);
+        if (originalComment && originalComment.authorEmail !== authorEmail) {
+          const commentAuthor = await collectionUsers.findOne({ email: originalComment.authorEmail });
+          if (commentAuthor) {
+            await createNotification({
+              recipientId: commentAuthor.uid,
+              senderId: req.body.senderId, // Client should send sender's uid
+              senderName: authorName,
+              senderPhoto: authorPhoto,
+              postId: postId,
+              postText: post.text,
+              type: 'reply',
+              commentText: text
+            });
+          }
+        }
 
         res.send({ success: true, reply: newReply });
       } catch (err) {
@@ -671,20 +930,6 @@ async function run() {
         }));
     }
 
-    // function addReplyRecursive(comments, targetId, newReply) {
-    //   return comments.map((c) => {
-    //     if (c._id.toString() === targetId.toString()) {
-    //       return { ...c, replies: [...(c.replies || []), newReply] };
-    //     }
-    //     if (c.replies && c.replies.length > 0) {
-    //       return {
-    //         ...c,
-    //         replies: addReplyRecursive(c.replies, targetId, newReply),
-    //       };
-    //     }
-    //     return c;
-    //   });
-    // }
     function updateReplyRecursive(comments, targetId, newText, authorEmail) {
       return comments.map((c) => {
         if (c._id.toString() === targetId.toString()) {
@@ -834,13 +1079,17 @@ async function run() {
       }
     });
 
-    // Add comment to post
+    // Add comment to post - UPDATED WITH NOTIFICATION
     app.post("/socialPost/:id/comments", async (req, res) => {
       const postId = req.params.id;
-      const { userName, text, authorEmail, authorPhoto } = req.body;
-      
+      const { userName, text, authorEmail, authorPhoto, senderId } = req.body; // Added senderId
 
       try {
+        const post = await collectionPost.findOne({
+          _id: new ObjectId(postId),
+        });
+        if (!post) return res.status(404).send({ error: "Post not found" });
+
         const newComment = {
           _id: new ObjectId(),
           authorName: userName || "Unknown",
@@ -856,12 +1105,90 @@ async function run() {
           { $push: { comments: newComment }, $inc: { commentCount: 1 } }
         );
 
+        // NEW: Create comment notification
+        if (post.userId !== senderId) { // Don't notify if user comments on their own post
+          await createNotification({
+            recipientId: post.userId,
+            senderId: senderId,
+            senderName: userName,
+            senderPhoto: authorPhoto,
+            postId: postId,
+            postText: post.text,
+            type: 'comment',
+            commentText: text
+          });
+        }
+
         res.status(201).send({ comment: newComment });
       } catch (err) {
         console.error(err);
         res.status(500).send({ error: "Failed to add comment" });
       }
     });
+
+
+  // for story section ......................................................................
+
+  app.post("/story", upload.single("photo"), async (req, res) => {
+      try {
+        const {  userName, userPhoto,  userId } = req.body;
+        const file = req.file;
+        const time = new Date().toLocaleTimeString("en-US", {
+          timeZone: "Asia/Dhaka",
+        });
+        const timeC = new Date();
+        
+
+        const newStory = {
+          userId: userId, //added for userId
+          userName: userName,
+          userPhoto: userPhoto,
+          image: file ? file.buffer.toString("base64") : null,
+          filename: file?.originalname,
+          mimetype: file?.mimetype,
+          likes: [],
+          createdAt: time ,
+          time:timeC,
+        };
+
+        const result = await collectionStory.insertOne(newStory);
+        res.send({ success: true, insertedId: result.insertedId });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to create story" });
+      }
+    });
+
+    // Get all posts (for debugging - consider removing in production)
+    app.get("/story", async (req, res) => {
+      try {
+        const posts = await collectionStory.find({}).toArray();
+        res.send(posts);
+
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to fetch posts" });
+      }
+    });
+
+    // Delete post
+    app.delete("/story/:id", async (req, res) => {
+      const postId = req.params.id;
+      try {
+        const result = await collectionStory.deleteOne({
+          _id: new ObjectId(postId),
+        });
+        if (result.deletedCount === 0)
+          return res.status(404).send({ message: "Post not found" });
+        res.send({ success: true, deletedId: postId });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to delete post" });
+      }
+    });
+
+
+
   } catch (err) {
     console.error(err);
   }
