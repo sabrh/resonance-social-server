@@ -440,26 +440,26 @@ async function run() {
         res.status(500).send({ error: "Failed to update like" });
       }
     });
-    app.get("/socialPost/:id/likes", async (req, res) => {
-      const postId = req.params.id;
-      try {
-        const post = await collectionPost.findOne({
-          _id: new ObjectId(postId),
-        });
-        if (!post) return res.status(404).send({ error: "Post not found" });
+    // app.get("/socialPost/:id/likes", async (req, res) => {
+    //   const postId = req.params.id;
+    //   try {
+    //     const post = await collectionPost.findOne({
+    //       _id: new ObjectId(postId),
+    //     });
+    //     if (!post) return res.status(404).send({ error: "Post not found" });
 
-        const likes = post.likes || [];
+    //     const likes = post.likes || [];
 
-        const users = await collectionUsers
-          .find({ uid: { $in: likes } })
-          .project({ uid: 1, displayName: 1, photoURL: 1 })
-          .toArray();
-        res.send(users);
-      } catch (err) {
-        console.error(err);
-        res.status(500).send({ error: "Failed to fetch like users" });
-      }
-    });
+    //     const users = await collectionUsers
+    //       .find({ uid: { $in: likes } })
+    //       .project({ uid: 1, displayName: 1, photoURL: 1 })
+    //       .toArray();
+    //     res.send(users);
+    //   } catch (err) {
+    //     console.error(err);
+    //     res.status(500).send({ error: "Failed to fetch like users" });
+    //   }
+    // });
 
     // Get users who liked a post
     app.get("/socialPost/:id/likes", async (req, res) => {
