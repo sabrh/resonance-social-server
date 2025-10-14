@@ -35,12 +35,14 @@ async function run() {
 
     const collectionUsers = client.db("createPostDB").collection("users");
     const collectionPost = client.db("createPostDB").collection("createPost");
-    const collectionNotifications = client.db("createPostDB").collection("notifications"); 
+    const collectionNotifications = client
+      .db("createPostDB")
+      .collection("notifications");
     const collectionStory = client.db("createStoryDB").collection("story");
 
     // delete story auto
 
-  //  await collectionStory.createIndex({ time: 1 }, { expireAfterSeconds: 86400 });
+    //  await collectionStory.createIndex({ time: 1 }, { expireAfterSeconds: 86400 });
 
     // NEW: Notifications collection
 
@@ -51,11 +53,11 @@ async function run() {
     // Generate notification message
     function generateNotificationMessage(type, senderName, commentText = "") {
       switch (type) {
-        case 'like':
+        case "like":
           return `${senderName} liked your post`;
-        case 'comment':
+        case "comment":
           return `${senderName} commented on your post`;
-        case 'reply':
+        case "reply":
           return `${senderName} replied to your comment`;
         default:
           return `${senderName} interacted with your post`;
@@ -73,13 +75,17 @@ async function run() {
           postId,
           postText,
           type,
-          commentText
+          commentText,
         } = notificationData;
 
         // Don't create notification if user is interacting with their own post
         if (recipientId === senderId) return;
 
-        const message = generateNotificationMessage(type, senderName, commentText);
+        const message = generateNotificationMessage(
+          type,
+          senderName,
+          commentText
+        );
 
         const notification = {
           recipientId,
@@ -92,7 +98,7 @@ async function run() {
           message,
           commentText: commentText || "",
           isRead: false,
-          createdAt: new Date()
+          createdAt: new Date(),
         };
 
         await collectionNotifications.insertOne(notification);
@@ -275,8 +281,8 @@ async function run() {
             senderPhoto: currentUser.photoURL,
             postId: null,
             postText: "",
-            type: 'follow',
-            commentText: ""
+            type: "follow",
+            commentText: "",
           });
         }
 
@@ -471,7 +477,7 @@ async function run() {
 
         const count = await collectionNotifications.countDocuments({
           recipientId: userId,
-          isRead: false
+          isRead: false,
         });
 
         res.send({ count });
@@ -488,7 +494,19 @@ async function run() {
     // Create a post
     app.post("/socialPost", upload.single("photo"), async (req, res) => {
       try {
-        const { text, privacy, userName, userPhoto, userEmail, userId, shared, sharedUserName, sharedUserPhoto, sharedUserText, sharedUserId } = req.body;
+        const {
+          text,
+          privacy,
+          userName,
+          userPhoto,
+          userEmail,
+          userId,
+          shared,
+          sharedUserName,
+          sharedUserPhoto,
+          sharedUserText,
+          sharedUserId,
+        } = req.body;
         const file = req.file;
         const time = new Date().toLocaleTimeString("en-US", {
           timeZone: "Asia/Dhaka",
@@ -533,7 +551,6 @@ async function run() {
       try {
         const posts = await collectionPost.find({}).toArray();
         res.send(posts);
-
       } catch (err) {
         console.error(err);
         res.status(500).send({ error: "Failed to fetch posts" });
@@ -556,87 +573,102 @@ async function run() {
       }
     });
 
-    // Like/unlike a post - UPDATED WITH NOTIFICATION
-    app.put("/socialPost/:id/like", async (req, res) => {
+    // React to a post (like/love/haha/sad)
+    app.put("/socialPost/:id/react", async (req, res) => {
       const postId = req.params.id;
-      const { userId } = req.body;
+      const { userId, reactionType, senderName, senderPhoto } = req.body;
 
       try {
+        if (!ObjectId.isValid(postId)) {
+          return res.status(400).send({ error: "Invalid post ID" });
+        }
+
         const post = await collectionPost.findOne({
           _id: new ObjectId(postId),
         });
         if (!post) return res.status(404).send({ message: "Post not found" });
 
-        const likes = post.likes || [];
-        let updatedLikes;
+        if (!post.reactions) post.reactions = [];
 
-        if (likes.includes(userId)) {
-          updatedLikes = likes.filter((id) => id !== userId);
-        } else {
-          updatedLikes = [...likes, userId];
-
-          // NEW: Create like notification (only when liking, not unliking)
-          if (post.userId !== userId) { // Don't notify if user likes their own post
-            await createNotification({
-              recipientId: post.userId,
-              senderId: userId,
-              senderName: req.body.senderName, // Client should send this
-              senderPhoto: req.body.senderPhoto, // Client should send this
-              postId: postId,
-              postText: post.text,
-              type: 'like',
-              commentText: ""
-            });
-          }
-        }
-
-        await collectionPost.updateOne(
-          { _id: new ObjectId(postId) },
-          { $set: { likes: updatedLikes } }
+        // check if user already reacted
+        const existingIndex = post.reactions.findIndex(
+          (r) => r.userId === userId
         );
 
+        if (existingIndex >= 0) {
+          if (
+            post.reactions[existingIndex].type === reactionType ||
+            reactionType === null
+          ) {
+            // ✅ same reaction → remove (unreact)
+            post.reactions.splice(existingIndex, 1);
+          } else {
+            // ✅ different reaction → update
+            post.reactions[existingIndex].type = reactionType;
+          }
+        } else if (reactionType) {
+          // ✅ add new reaction
+          post.reactions.push({
+            userId,
+            type: reactionType,
+            displayName: senderName,
+            photoURL: senderPhoto,
+          });
+        }
+
+        // ✅ update DB
+        await collectionPost.updateOne(
+          { _id: new ObjectId(postId) },
+          { $set: { reactions: post.reactions } }
+        );
+
+        // ✅ calculate current user reaction (after update)
+        const userReaction =
+          post.reactions.find((r) => r.userId === userId)?.type || null;
+
+        // send updated info back to frontend
         res.send({
-          liked: updatedLikes.includes(userId),
-          likesCount: updatedLikes.length,
+          reactions: post.reactions,
+          userReaction,
+          reactionsCount: post.reactions.length,
         });
       } catch (err) {
-        console.error(err);
-        res.status(500).send({ error: "Failed to update like" });
+        console.error("Error in /react route:", err);
+        res.status(500).send({ error: "Internal server error" });
       }
     });
-   app.get("/socialPost/:id/likes", async (req, res) => {
-  const postId = req.params.id;
-  try {
-    const post = await collectionPost.findOne({
-      _id: new ObjectId(postId),
+
+    app.get("/socialPost/:id/reactions", async (req, res) => {
+      const postId = req.params.id;
+      try {
+        const post = await collectionPost.findOne({
+          _id: new ObjectId(postId),
+        });
+        if (!post) return res.status(404).send({ error: "Post not found" });
+
+        const reactions = post.reactions || [];
+
+        // সব userId collect করো
+        const userIds = reactions.map((r) => r.userId);
+
+        const users = await collectionUsers
+          .find({ uid: { $in: userIds } })
+          .project({ uid: 1, displayName: 1, photoURL: 1 })
+          .toArray();
+
+        // user info এর সাথে reaction type merge করো
+        const result = reactions.map((r) => {
+          const u = users.find((u) => u.uid === r.userId);
+          return { ...u, type: r.type };
+        });
+
+        res.send(result);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to fetch reactions" });
+      }
     });
-    if (!post) return res.status(404).send({ error: "Post not found" });
 
-    const likes = post.likes || [];
-
-    const users = await collectionUsers
-      .find({ uid: { $in: likes } })
-      .project({ uid: 1, displayName: 1, photoURL: 1 })
-      .toArray();
-
-    // ✅ remove duplicate users (based on uid)
-    const uniqueUsers = Array.from(
-      new Map(users.map((u) => [u.uid, u])).values()
-    );
-
-    res.send(uniqueUsers);
-  } catch (err) {
-    console.error(err);
-    res.status(500).send({ error: "Failed to fetch like users" });
-  }
-});
-
-
-
-    // server.js - notifications collection এ এই API টি যোগ করুন
-
-    // Create notification
-    // server.js - notifications collection এ এই API টি নিশ্চিত করুন
     app.post("/notifications", async (req, res) => {
       try {
         const {
@@ -647,15 +679,22 @@ async function run() {
           postId,
           postText,
           type,
-          commentText
+          commentText,
         } = req.body;
 
         // Don't create notification if user is interacting with their own post
         if (recipientId === senderId) {
-          return res.send({ success: true, message: "Self notification skipped" });
+          return res.send({
+            success: true,
+            message: "Self notification skipped",
+          });
         }
 
-        const message = generateNotificationMessage(type, senderName, commentText);
+        const message = generateNotificationMessage(
+          type,
+          senderName,
+          commentText
+        );
 
         const notification = {
           recipientId,
@@ -668,11 +707,14 @@ async function run() {
           message,
           commentText: commentText || "",
           isRead: false,
-          createdAt: new Date()
+          createdAt: new Date(),
         };
 
         const result = await collectionNotifications.insertOne(notification);
-        res.send({ success: true, notification: { ...notification, _id: result.insertedId } });
+        res.send({
+          success: true,
+          notification: { ...notification, _id: result.insertedId },
+        });
       } catch (err) {
         console.error("Error creating notification:", err);
         res.status(500).send({ error: "Failed to create notification" });
@@ -682,15 +724,15 @@ async function run() {
     // Helper function
     function generateNotificationMessage(type, senderName, commentText = "") {
       switch (type) {
-        case 'like':
+        case "like":
           return `${senderName} liked your post`;
-        case 'comment':
+        case "comment":
           return `${senderName} commented on your post`;
-        case 'reply':
+        case "reply":
           return `${senderName} replied to your comment`;
-        case 'follow':
+        case "follow":
           return `${senderName} started following you`;
-        case 'share':
+        case "share":
           return `${senderName} shared your post`;
         default:
           return `${senderName} interacted with your post`;
@@ -700,15 +742,15 @@ async function run() {
     // Helper function (যদি আগে থেকে না থাকে)
     function generateNotificationMessage(type, senderName, commentText = "") {
       switch (type) {
-        case 'like':
+        case "like":
           return `${senderName} liked your post`;
-        case 'comment':
+        case "comment":
           return `${senderName} commented on your post`;
-        case 'reply':
+        case "reply":
           return `${senderName} replied to your comment`;
-        case 'follow':
+        case "follow":
           return `${senderName} started following you`;
-        case 'share':
+        case "share":
           return `${senderName} shared your post`;
         default:
           return `${senderName} interacted with your post`;
@@ -761,8 +803,8 @@ async function run() {
             senderPhoto: userPhoto,
             postId: id,
             postText: originalPost.text,
-            type: 'share',
-            commentText: ""
+            type: "share",
+            commentText: "",
           });
         }
 
@@ -842,9 +884,13 @@ async function run() {
 
         // NEW: Create reply notification
         // Find the comment author to notify them
-        const originalComment = post.comments.find(c => c._id.toString() === commentId);
+        const originalComment = post.comments.find(
+          (c) => c._id.toString() === commentId
+        );
         if (originalComment && originalComment.authorEmail !== authorEmail) {
-          const commentAuthor = await collectionUsers.findOne({ email: originalComment.authorEmail });
+          const commentAuthor = await collectionUsers.findOne({
+            email: originalComment.authorEmail,
+          });
           if (commentAuthor) {
             await createNotification({
               recipientId: commentAuthor.uid,
@@ -853,8 +899,8 @@ async function run() {
               senderPhoto: authorPhoto,
               postId: postId,
               postText: post.text,
-              type: 'reply',
-              commentText: text
+              type: "reply",
+              commentText: text,
             });
           }
         }
@@ -1106,7 +1152,8 @@ async function run() {
         );
 
         // NEW: Create comment notification
-        if (post.userId !== senderId) { // Don't notify if user comments on their own post
+        if (post.userId !== senderId) {
+          // Don't notify if user comments on their own post
           await createNotification({
             recipientId: post.userId,
             senderId: senderId,
@@ -1114,8 +1161,8 @@ async function run() {
             senderPhoto: authorPhoto,
             postId: postId,
             postText: post.text,
-            type: 'comment',
-            commentText: text
+            type: "comment",
+            commentText: text,
           });
         }
 
@@ -1126,18 +1173,16 @@ async function run() {
       }
     });
 
+    // for story section ......................................................................
 
-  // for story section ......................................................................
-
-  app.post("/story", upload.single("photo"), async (req, res) => {
+    app.post("/story", upload.single("photo"), async (req, res) => {
       try {
-        const {  userName, userPhoto,  userId } = req.body;
+        const { userName, userPhoto, userId } = req.body;
         const file = req.file;
         const time = new Date().toLocaleTimeString("en-US", {
           timeZone: "Asia/Dhaka",
         });
         const timeC = new Date();
-        
 
         const newStory = {
           userId: userId, //added for userId
@@ -1147,8 +1192,8 @@ async function run() {
           filename: file?.originalname,
           mimetype: file?.mimetype,
           likes: [],
-          createdAt: time ,
-          time:timeC,
+          createdAt: time,
+          time: timeC,
         };
 
         const result = await collectionStory.insertOne(newStory);
@@ -1164,7 +1209,6 @@ async function run() {
       try {
         const posts = await collectionStory.find({}).toArray();
         res.send(posts);
-
       } catch (err) {
         console.error(err);
         res.status(500).send({ error: "Failed to fetch posts" });
@@ -1186,9 +1230,6 @@ async function run() {
         res.status(500).send({ error: "Failed to delete post" });
       }
     });
-
-
-
   } catch (err) {
     console.error(err);
   }
