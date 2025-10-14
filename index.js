@@ -6,6 +6,7 @@ require("dotenv").config();
 const port = process.env.PORT || 3000;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
+
 app.use(cors());
 app.use(express.json());
 
@@ -36,6 +37,8 @@ async function run() {
     const collectionUsers = client.db("createPostDB").collection("users");
     const collectionPost = client.db("createPostDB").collection("createPost");
     const collectionNotifications = client.db("createPostDB").collection("notifications"); // NEW: Notifications collection
+
+   
 
     // ============================
     // Helper Functions
@@ -180,15 +183,36 @@ async function run() {
     app.put("/users/:uid/details", async (req, res) => {
       try {
         const uid = req.params.uid;
-        const { education, location, gender, relationshipStatus } = req.body;
+        const {
+        education,
+        location,
+        gender,
+        relationshipStatus,
+        username,
+        birthday,
+        languages,
+        bio,
+        occupation,
+        company,
+        skills,
+        socialLinks,
+      } = req.body;
 
         const update = {
-          ...(education && { education }),
-          ...(location && { location }),
-          ...(gender && { gender }),
-          ...(relationshipStatus && { relationshipStatus }),
-          updatedAt: new Date(),
-        };
+        ...(education !== undefined && { education }),
+        ...(location !== undefined && { location }),
+        ...(gender !== undefined && { gender }),
+        ...(relationshipStatus !== undefined && { relationshipStatus }),
+        ...(username !== undefined && { username }),
+        ...(birthday !== undefined && { birthday }),
+        ...(languages !== undefined && { languages }),
+        ...(bio !== undefined && { bio }),
+        ...(occupation !== undefined && { occupation }),
+        ...(company !== undefined && { company }),
+        ...(skills !== undefined && { skills }),
+        ...(socialLinks !== undefined && { socialLinks }),
+        updatedAt: new Date(),
+      };
 
         const result = await collectionUsers.updateOne(
           { uid },
@@ -1112,6 +1136,13 @@ async function run() {
         res.status(500).send({ error: "Failed to add comment" });
       }
     });
+
+
+
+    
+
+
+
   } catch (err) {
     console.error(err);
   }
