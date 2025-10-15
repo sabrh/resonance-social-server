@@ -7,12 +7,21 @@ const port = process.env.PORT || 3000;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 
+
 app.use(cors());
 app.use(express.json());
 
 // Multer setup (memory storage for now)
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
+
+// for Ai
+
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
 
 // MongoDB connection
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.qk8emwu.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
@@ -36,7 +45,14 @@ async function run() {
 
     const collectionUsers = client.db("createPostDB").collection("users");
     const collectionPost = client.db("createPostDB").collection("createPost");
-    const collectionNotifications = client.db("createPostDB").collection("notifications"); // NEW: Notifications collection
+    const collectionNotifications = client.db("createPostDB").collection("notifications"); 
+    const collectionStory = client.db("createStoryDB").collection("story");
+
+    // delete story auto
+
+  //  await collectionStory.createIndex({ time: 1 }, { expireAfterSeconds: 86400 });
+
+    // NEW: Notifications collection
 
    
 
@@ -1138,9 +1154,89 @@ async function run() {
     });
 
 
+  // for story section ......................................................................
 
-    
+  app.post("/story", upload.single("photo"), async (req, res) => {
+      try {
+        const {  userName, userPhoto,  userId } = req.body;
+        const file = req.file;
+        const time = new Date().toLocaleTimeString("en-US", {
+          timeZone: "Asia/Dhaka",
+        });
+        const timeC = new Date();
+        
 
+        const newStory = {
+          userId: userId, //added for userId
+          userName: userName,
+          userPhoto: userPhoto,
+          image: file ? file.buffer.toString("base64") : null,
+          filename: file?.originalname,
+          mimetype: file?.mimetype,
+          likes: [],
+          createdAt: time ,
+          time:timeC,
+        };
+
+        const result = await collectionStory.insertOne(newStory);
+        res.send({ success: true, insertedId: result.insertedId });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to create story" });
+      }
+    });
+
+    // Get all posts (for debugging - consider removing in production)
+    app.get("/story", async (req, res) => {
+      try {
+        const posts = await collectionStory.find({}).toArray();
+        res.send(posts);
+
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to fetch posts" });
+      }
+    });
+
+    // Delete post
+    app.delete("/story/:id", async (req, res) => {
+      const postId = req.params.id;
+      try {
+        const result = await collectionStory.deleteOne({
+          _id: new ObjectId(postId),
+        });
+        if (result.deletedCount === 0)
+          return res.status(404).send({ message: "Post not found" });
+        res.send({ success: true, deletedId: postId });
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to delete post" });
+      }
+    });
+
+
+
+
+// Ai chat section............................................................................
+// Initialize Gemini client
+
+
+// New route for chatbot
+app.post("/AiChat", async (req, res) => {
+  try {
+    const { message } = req.body;
+    if (!message) return res.status(400).json({ error: "Message is required" });
+
+    // Use `generateContent` for a single-turn chat
+    const result = await model.generateContent(message);
+    const reply = result.response.text();
+
+    res.json({ reply });
+  } catch (err) {
+    console.error("Gemini API error:", err);
+    res.status(500).json({ error: "Failed to get AI response" });
+  }
+});
 
 
   } catch (err) {
