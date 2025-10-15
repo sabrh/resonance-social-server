@@ -13,6 +13,13 @@ app.use(express.json());
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
+// for Ai
+
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
 // MongoDB connection
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.qk8emwu.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
 const client = new MongoClient(uri, {
@@ -193,13 +200,34 @@ async function run() {
     app.put("/users/:uid/details", async (req, res) => {
       try {
         const uid = req.params.uid;
-        const { education, location, gender, relationshipStatus } = req.body;
+        const {
+          education,
+          location,
+          gender,
+          relationshipStatus,
+          username,
+          birthday,
+          languages,
+          bio,
+          occupation,
+          company,
+          skills,
+          socialLinks,
+        } = req.body;
 
         const update = {
-          ...(education && { education }),
-          ...(location && { location }),
-          ...(gender && { gender }),
-          ...(relationshipStatus && { relationshipStatus }),
+          ...(education !== undefined && { education }),
+          ...(location !== undefined && { location }),
+          ...(gender !== undefined && { gender }),
+          ...(relationshipStatus !== undefined && { relationshipStatus }),
+          ...(username !== undefined && { username }),
+          ...(birthday !== undefined && { birthday }),
+          ...(languages !== undefined && { languages }),
+          ...(bio !== undefined && { bio }),
+          ...(occupation !== undefined && { occupation }),
+          ...(company !== undefined && { company }),
+          ...(skills !== undefined && { skills }),
+          ...(socialLinks !== undefined && { socialLinks }),
           updatedAt: new Date(),
         };
 
@@ -1228,6 +1256,27 @@ async function run() {
       } catch (err) {
         console.error(err);
         res.status(500).send({ error: "Failed to delete post" });
+      }
+    });
+
+    // Ai chat section............................................................................
+    // Initialize Gemini client
+
+    // New route for chatbot
+    app.post("/AiChat", async (req, res) => {
+      try {
+        const { message } = req.body;
+        if (!message)
+          return res.status(400).json({ error: "Message is required" });
+
+        // Use `generateContent` for a single-turn chat
+        const result = await model.generateContent(message);
+        const reply = result.response.text();
+
+        res.json({ reply });
+      } catch (err) {
+        console.error("Gemini API error:", err);
+        res.status(500).json({ error: "Failed to get AI response" });
       }
     });
   } catch (err) {
