@@ -22,10 +22,12 @@ const upload = multer({ storage: storage });
 // Socket.IO setup (allow your frontend origin)
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_ORIGIN || "http://localhost:5173",
+    origin: process.env.CLIENT_ORIGIN || "http://localhost:5176",
     methods: ["GET", "POST"]
   }
 });
+
+
 // for Ai
 
 const { GoogleGenerativeAI } = require("@google/generative-ai");
@@ -63,9 +65,9 @@ async function run() {
 
 
 
-    // Create simple indexes to speed up queries
-    await collectionMessages.createIndex({ senderId: 1, receiverId: 1 });
-    await collectionMessages.createIndex({ createdAt: 1 });
+    // // Create simple indexes to speed up queries
+    // await collectionMessages.createIndex({ senderId: 1, receiverId: 1 });
+    // await collectionMessages.createIndex({ createdAt: 1 });
 
     // delete story auto
 
@@ -522,18 +524,7 @@ async function run() {
 
     console.log(`Message saved from ${data.senderId} to ${data.receiverId}`);
 
-    // Calculate and send unread count update
-    const unreadCount = await collectionMessages.countDocuments({
-      receiverId: data.receiverId,
-      isRead: false
-    });
-
-    if (receiverSocketId) {
-      io.to(receiverSocketId).emit('unread_count_update', {
-        userId: data.receiverId,
-        unreadCount,
-      });
-    }
+    
   } catch (err) {
     console.error("Failed to send message:", err);
     socket.emit('message_error', { error: 'Failed to send message' });
@@ -564,20 +555,7 @@ async function run() {
             { $set: { isRead: true, readAt: new Date() } }
           );
 
-          // After updateMany(...)
-          const unreadCount = await collectionMessages.countDocuments({
-            receiverId: otherUserId,
-            isRead: false
-          });
-
-          // Emit updated unread count back to the reader
-          const readerSocketId = connectedUsers.get(userId);
-          if (readerSocketId) {
-            io.to(readerSocketId).emit('unread_count_update', {
-              userId,
-              unreadCount,
-            });
-          }
+          
 
 
           const otherUserSocketId = connectedUsers.get(otherUserId);
