@@ -5,7 +5,8 @@ const app = express();
 require("dotenv").config();
 const port = process.env.PORT || 3000;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-
+import { v2 as cloudinary } from "cloudinary";
+import mongoose from "mongoose";
 
 
 app.use(cors());
@@ -1280,7 +1281,18 @@ app.post("/AiChat", async (req, res) => {
 // chat added.................................................................................
 
 // Get all users (frontend filters out current user locally)
-    app.get("/users", async (req, res) => {
+// model to store messages in mongodb
+const messageSchema = new mongoose.Schema({
+  senderId: {type: mongoose.Schema.Types.ObjectId, ref: "User", required: true},
+  receiverId: {type: mongoose.Schema.Types.ObjectId, ref: "User", required: true},
+  text: { type: String },
+  image: { type: String },
+  seen: { type: Boolean, default: false }
+}, {timestamps: true});
+
+const Message = mongoose.model("Message", messageSchema);
+  
+app.get("/users", async (req, res) => {
       try {
         const users = await collectionUsers.find({})
           .project({
@@ -1288,15 +1300,63 @@ app.post("/AiChat", async (req, res) => {
             displayName: 1,
             email: 1,
             photoURL: 1
-            // NOTE: removed bio as requested
           })
           .toArray();
         res.send(users);
+
+        // count number of messages not seen
+        const unseenMessages ={}
+        const promises = filteredUsers.map(async (user) => {
+          const messages = await Message.find({senderId: user._id, receiverId: userId, seen: false})
+          if(messages.length > 0){
+            unseenMessages[user._id] = messages.length;
+          }
+        })
+        await Promise.all(promises);
+        res.json({success: true, users: filteredUsers, unseenMessages})
       } catch (err) {
         console.error("Failed to fetch users:", err);
         res.status(500).send({ error: "Failed to fetch users" });
+
+        console.log(err.message);
+        res.json({success: false, message: err.message})
       }
     });
+
+    // get all messages for selected user
+    const getMessages = async (req, res)=>{
+      try {
+        const { id: selectedUserId } = req.params;
+        const myId = req.user._id;
+
+        const messages = await Message.find({
+          $or: [
+            {senderId: myId, receiverId: selectedUserId},
+            {senderId: selectedUserId, receiverId: myId},
+          ]
+        })
+        await Message.updateMany({senderId: selectedUserId, receiverId: myId},
+          {seen: true}
+        );
+        res.json({success: true, messages})
+
+      } catch (error) {
+        console.log(error.message);
+        res.json({success: false, message: error.message})
+      }
+    }
+
+    // api to mark message as seen using message id
+    const markMessageAsSeen = async(req, res)=>{
+      try{
+        const { id } = req.params;
+        await Message.findByIdAndUpdate(id, {seen: true})
+        res.json({success: true})
+      } catch (error) {
+        console.log(error.message);
+        res.json({success: false, message: error.message})
+      }
+    }
 
     // Search users by query - not used by your current frontend but handy
     app.get("/users/search/:uid", async (req, res) => {
@@ -1319,6 +1379,21 @@ app.post("/AiChat", async (req, res) => {
         res.status(500).send({ error: "Failed to search users" });
       }
     });
+
+    // cloudinary config for send/receive images
+    
+    cloudinary.config({
+      cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+      api_key: process.env.CLOUDINARY_API_KEY,
+      api_secret: process.env.CLOUDINARY_API_SECRET,
+    })
+   
+
+
+
+
+
+
 
     // Get messages between two users (frontend calls /messages/:userId1/:userId2)
     app.get("/messages/:userId1/:userId2", async (req, res) => {
