@@ -1,14 +1,12 @@
 const express = require("express");
-const app = express();
 const cors = require("cors");
 const multer = require("multer");
-const http = require("http");
-const { Server } = require("socket.io");
+const app = express();
 require("dotenv").config();
 const port = process.env.PORT || 3000;
-const MONGO_URI = process.env.MONGO_URI
-const server = http.createServer(app);
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+
+
 
 app.use(cors());
 app.use(express.json());
@@ -18,12 +16,13 @@ const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
 // Socket.IO setup (allow your frontend origin)
-const io = new Server(server, {
-  cors: {
-    origin: process.env.CLIENT_ORIGIN || "http://localhost:5176",
-    methods: ["GET", "POST"]
-  }
-});
+// const io = new Server(server, {
+//   cors: {
+//     origin: process.env.CLIENT_ORIGIN || "http://localhost:5174",
+//     methods: ["GET", "POST"]
+//   }
+// });
+
 
 
 // for Ai
@@ -32,6 +31,7 @@ const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+
 
 // MongoDB connection
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.qk8emwu.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`;
@@ -50,29 +50,21 @@ app.get("/", (req, res) => {
 
 async function run() {
   try {
-     await client.connect();
+    // await client.connect();
     console.log("Connected to MongoDB successfully!");
 
     const collectionUsers = client.db("createPostDB").collection("users");
     const collectionPost = client.db("createPostDB").collection("createPost");
-    const collectionNotifications = client
-      .db("createPostDB")
-      .collection("notifications");
+    const collectionNotifications = client.db("createPostDB").collection("notifications"); 
     const collectionStory = client.db("createStoryDB").collection("story");
-    const collectionMessages = client.db("createPostDB").collection("messages");
-    const collectionChats = client.db("createPostDB").collection("chats");
-
-
-
-    // // Create simple indexes to speed up queries
-    // await collectionMessages.createIndex({ senderId: 1, receiverId: 1 });
-    // await collectionMessages.createIndex({ createdAt: 1 });
 
     // delete story auto
 
-    //  await collectionStory.createIndex({ time: 1 }, { expireAfterSeconds: 86400 });
+  //  await collectionStory.createIndex({ time: 1 }, { expireAfterSeconds: 86400 });
 
     // NEW: Notifications collection
+
+   
 
     // ============================
     // Helper Functions
@@ -81,11 +73,11 @@ async function run() {
     // Generate notification message
     function generateNotificationMessage(type, senderName, commentText = "") {
       switch (type) {
-        case "like":
+        case 'like':
           return `${senderName} liked your post`;
-        case "comment":
+        case 'comment':
           return `${senderName} commented on your post`;
-        case "reply":
+        case 'reply':
           return `${senderName} replied to your comment`;
         default:
           return `${senderName} interacted with your post`;
@@ -103,11 +95,29 @@ async function run() {
           postId,
           postText,
           type,
-          commentText,
+          commentText
         } = notificationData;
 
+        // Don't create notification if user is interacting with their own post
+        if (recipientId === senderId) return;
 
-        await collectionNotifications.insertOne(notificationData);
+        const message = generateNotificationMessage(type, senderName, commentText);
+
+        const notification = {
+          recipientId,
+          senderId,
+          senderName,
+          senderPhoto,
+          postId,
+          postText: postText ? postText.substring(0, 100) : "",
+          type,
+          message,
+          commentText: commentText || "",
+          isRead: false,
+          createdAt: new Date()
+        };
+
+        await collectionNotifications.insertOne(notification);
       } catch (err) {
         console.error("Error creating notification:", err);
       }
@@ -200,35 +210,35 @@ async function run() {
       try {
         const uid = req.params.uid;
         const {
-          education,
-          location,
-          gender,
-          relationshipStatus,
-          username,
-          birthday,
-          languages,
-          bio,
-          occupation,
-          company,
-          skills,
-          socialLinks,
-        } = req.body;
+        education,
+        location,
+        gender,
+        relationshipStatus,
+        username,
+        birthday,
+        languages,
+        bio,
+        occupation,
+        company,
+        skills,
+        socialLinks,
+      } = req.body;
 
         const update = {
-          ...(education !== undefined && { education }),
-          ...(location !== undefined && { location }),
-          ...(gender !== undefined && { gender }),
-          ...(relationshipStatus !== undefined && { relationshipStatus }),
-          ...(username !== undefined && { username }),
-          ...(birthday !== undefined && { birthday }),
-          ...(languages !== undefined && { languages }),
-          ...(bio !== undefined && { bio }),
-          ...(occupation !== undefined && { occupation }),
-          ...(company !== undefined && { company }),
-          ...(skills !== undefined && { skills }),
-          ...(socialLinks !== undefined && { socialLinks }),
-          updatedAt: new Date(),
-        };
+        ...(education !== undefined && { education }),
+        ...(location !== undefined && { location }),
+        ...(gender !== undefined && { gender }),
+        ...(relationshipStatus !== undefined && { relationshipStatus }),
+        ...(username !== undefined && { username }),
+        ...(birthday !== undefined && { birthday }),
+        ...(languages !== undefined && { languages }),
+        ...(bio !== undefined && { bio }),
+        ...(occupation !== undefined && { occupation }),
+        ...(company !== undefined && { company }),
+        ...(skills !== undefined && { skills }),
+        ...(socialLinks !== undefined && { socialLinks }),
+        updatedAt: new Date(),
+      };
 
         const result = await collectionUsers.updateOne(
           { uid },
@@ -308,8 +318,8 @@ async function run() {
             senderPhoto: currentUser.photoURL,
             postId: null,
             postText: "",
-            type: "follow",
-            commentText: "",
+            type: 'follow',
+            commentText: ""
           });
         }
 
@@ -330,267 +340,6 @@ async function run() {
         res.status(500).send({ error: "Follow/unfollow failed" });
       }
     });
-
-    // Live Chat Start
-
-    // Get all users (frontend filters out current user locally)
-    app.get("/users", async (req, res) => {
-      try {
-        const users = await collectionUsers.find({})
-          .project({
-            uid: 1,
-            displayName: 1,
-            email: 1,
-            photoURL: 1
-            // NOTE: removed bio as requested
-          })
-          .toArray();
-        res.send(users);
-      } catch (err) {
-        console.error("Failed to fetch users:", err);
-        res.status(500).send({ error: "Failed to fetch users" });
-      }
-    });
-
-    // Search users by query - not used by your current frontend but handy
-    app.get("/users/search/:uid", async (req, res) => {
-      try {
-        const { uid } = req.params;
-        const q = req.query.q || '';
-        if (!q) return res.status(400).send({ error: "Search query required" });
-
-        const users = await collectionUsers.find({
-          uid: { $ne: uid },
-          $or: [
-            { displayName: { $regex: q, $options: "i" } },
-            { email: { $regex: q, $options: "i" } }
-          ]
-        }).project({ uid: 1, displayName: 1, email: 1, photoURL: 1 }).limit(20).toArray();
-
-        res.send(users);
-      } catch (err) {
-        console.error("Failed to search users:", err);
-        res.status(500).send({ error: "Failed to search users" });
-      }
-    });
-
-    // Get messages between two users (frontend calls /messages/:userId1/:userId2)
-    app.get("/messages/:userId1/:userId2", async (req, res) => {
-      try {
-        const { userId1, userId2 } = req.params;
-        const messages = await collectionMessages.find({
-          $or: [
-            { senderId: userId1, receiverId: userId2 },
-            { senderId: userId2, receiverId: userId1 }
-          ]
-        }).sort({ createdAt: 1 }).toArray();
-        res.send(messages);
-      } catch (err) {
-        console.error("Failed to fetch messages:", err);
-        res.status(500).send({ error: "Failed to fetch messages" });
-      }
-    });
-
-    // Mark messages read (keeps same route semantics)
-    app.put("/messages/read", async (req, res) => {
-      try {
-        const { userId, otherUserId } = req.body;
-        if (!userId || !otherUserId) return res.status(400).send({ error: "userId and otherUserId required" });
-
-        await collectionMessages.updateMany(
-          { senderId: otherUserId, receiverId: userId, isRead: false },
-          { $set: { isRead: true, readAt: new Date() } }
-        );
-
-        res.send({ success: true });
-      } catch (err) {
-        console.error("Failed to mark messages as read:", err);
-        res.status(500).send({ error: "Failed to mark messages as read" });
-      }
-    });
-
-    // conversations endpoint similar to earlier code
-    app.get("/conversations/:uid", async (req, res) => {
-      try {
-        const { uid } = req.params;
-        const conversations = await collectionMessages.aggregate([
-          { $match: { $or: [{ senderId: uid }, { receiverId: uid }] } },
-          { $sort: { createdAt: -1 } },
-          {
-            $group: {
-              _id: {
-                $cond: [{ $eq: ["$senderId", uid] }, "$receiverId", "$senderId"]
-              },
-              lastMessage: { $first: "$$ROOT" },
-              unreadCount: {
-                $sum: {
-                  $cond: [{ $and: [{ $eq: ["$receiverId", uid] }, { $eq: ["$isRead", false] }] }, 1, 0]
-                }
-              }
-            }
-          },
-          {
-            $lookup: {
-              from: "users",
-              localField: "_id",
-              foreignField: "uid",
-              as: "user"
-            }
-          },
-          { $unwind: "$user" },
-          {
-            $project: {
-              "user.uid": 1,
-              "user.displayName": 1,
-              "user.photoURL": 1,
-              "user.email": 1,
-              lastMessage: 1,
-              unreadCount: 1
-            }
-          }
-        ]).toArray();
-        res.send(conversations);
-      } catch (err) {
-        console.error("Failed to fetch conversations:", err);
-        res.status(500).send({ error: "Failed to fetch conversations" });
-      }
-    });
-
-    // -------------------------
-    // Socket.IO real-time chat
-    // -------------------------
-    const connectedUsers = new Map();
-
-    io.on('connection', (socket) => {
-      console.log('Socket connected:', socket.id);
-
-      // When client notifies server of logged-in user
-      socket.on('user_connected', (userId) => {
-        if (!userId) return;
-        connectedUsers.set(userId, socket.id);
-
-        // Broadcast to others that this user is online
-        socket.broadcast.emit('user_online', userId);
-        console.log(`User ${userId} connected as socket ${socket.id}`);
-      });
-
-      // Sending a message
-      socket.on('send_message', async (data) => {
-        try {
-          // normalize / ensure fields (senderId, receiverId required)
-          const messageData = {
-            senderId: data.senderId,
-            receiverId: data.receiverId,
-            text: data.text ?? undefined,
-            image: data.image ?? undefined,
-            isRead: false,
-            createdAt: new Date()
-          };
-
-          const result = await collectionMessages.insertOne(messageData);
-          const savedMessage = { ...messageData, _id: result.insertedId };
-
-          // Emit to receiver if online
-          const receiverSocketId = connectedUsers.get(data.receiverId);
-          if (receiverSocketId) {
-            io.to(receiverSocketId).emit('receive_message', savedMessage);
-          }
-
-          // Confirmation to sender
-          socket.emit('message_sent', savedMessage);
-
-          console.log(`Message saved from ${data.senderId} to ${data.receiverId}`);
-        } catch (err) {
-          console.error("Failed to send message:", err);
-          socket.emit('message_error', { error: 'Failed to send message' });
-        }
-      });
-
-      socket.on('send_message', async (data) => {
-  try {
-    // normalize / ensure fields
-    const messageData = {
-      senderId: data.senderId,
-      receiverId: data.receiverId,
-      text: data.text ?? undefined,
-      image: data.image ?? undefined,
-      isRead: false,
-      createdAt: new Date()
-    };
-
-    // Save message in DB
-    const result = await collectionMessages.insertOne(messageData);
-    const savedMessage = { ...messageData, _id: result.insertedId };
-
-    // Emit to receiver if online
-    const receiverSocketId = connectedUsers.get(data.receiverId);
-    if (receiverSocketId) {
-      io.to(receiverSocketId).emit('receive_message', savedMessage);
-    }
-
-    // Confirmation back to sender
-    socket.emit('message_sent', savedMessage);
-
-    console.log(`Message saved from ${data.senderId} to ${data.receiverId}`);
-
-    
-  } catch (err) {
-    console.error("Failed to send message:", err);
-    socket.emit('message_error', { error: 'Failed to send message' });
-  }
-});
-
-      // Typing indicator
-      socket.on('typing_start', (data) => {
-        const receiverSocketId = connectedUsers.get(data.receiverId);
-        if (receiverSocketId) {
-          io.to(receiverSocketId).emit('user_typing', { senderId: data.senderId, isTyping: true });
-        }
-      });
-
-      socket.on('typing_stop', (data) => {
-        const receiverSocketId = connectedUsers.get(data.receiverId);
-        if (receiverSocketId) {
-          io.to(receiverSocketId).emit('user_typing', { senderId: data.senderId, isTyping: false });
-        }
-      });
-
-      // Mark messages read via socket
-      socket.on('mark_messages_read', async (data) => {
-        try {
-          const { userId, otherUserId } = data;
-          await collectionMessages.updateMany(
-            { senderId: otherUserId, receiverId: userId, isRead: false },
-            { $set: { isRead: true, readAt: new Date() } }
-          );
-
-          
-
-
-          const otherUserSocketId = connectedUsers.get(otherUserId);
-          if (otherUserSocketId) {
-            io.to(otherUserSocketId).emit('messages_read', { readerId: userId });
-          }
-        } catch (err) {
-          console.error("Failed to mark messages read via socket:", err);
-        }
-      });
-
-      // Disconnect handling
-      socket.on('disconnect', () => {
-        for (const [userId, socketId] of connectedUsers.entries()) {
-          if (socketId === socket.id) {
-            connectedUsers.delete(userId);
-            socket.broadcast.emit('user_offline', userId);
-            console.log(`User ${userId} disconnected`);
-            break;
-          }
-        }
-      });
-    });
-
-    // Live Chat End
-
 
     // Newsfeed with proper privacy logic - FIXED VERSION
     app.get("/feed/:uid", async (req, res) => {
@@ -765,7 +514,7 @@ async function run() {
 
         const count = await collectionNotifications.countDocuments({
           recipientId: userId,
-          isRead: false,
+          isRead: false
         });
 
         res.send({ count });
@@ -782,19 +531,7 @@ async function run() {
     // Create a post
     app.post("/socialPost", upload.single("photo"), async (req, res) => {
       try {
-        const {
-          text,
-          privacy,
-          userName,
-          userPhoto,
-          userEmail,
-          userId,
-          shared,
-          sharedUserName,
-          sharedUserPhoto,
-          sharedUserText,
-          sharedUserId,
-        } = req.body;
+        const { text, privacy, userName, userPhoto, userEmail, userId, shared, sharedUserName, sharedUserPhoto, sharedUserText, sharedUserId } = req.body;
         const file = req.file;
         const time = new Date().toLocaleTimeString("en-US", {
           timeZone: "Asia/Dhaka",
@@ -839,6 +576,7 @@ async function run() {
       try {
         const posts = await collectionPost.find({}).toArray();
         res.send(posts);
+
       } catch (err) {
         console.error(err);
         res.status(500).send({ error: "Failed to fetch posts" });
@@ -861,7 +599,8 @@ async function run() {
       }
     });
 
-    // React to a post (like/love/haha/sad)
+    // Like/unlike a post - UPDATED WITH NOTIFICATION
+  // React to a post (like/love/haha/sad)
     app.put("/socialPost/:id/react", async (req, res) => {
       const postId = req.params.id;
       const { userId, reactionType, senderName, senderPhoto } = req.body;
@@ -957,6 +696,11 @@ async function run() {
       }
     });
 
+
+    // server.js - notifications collection এ এই API টি যোগ করুন
+
+    // Create notification
+    // server.js - notifications collection এ এই API টি নিশ্চিত করুন
     app.post("/notifications", async (req, res) => {
       try {
         const {
@@ -967,22 +711,15 @@ async function run() {
           postId,
           postText,
           type,
-          commentText,
+          commentText
         } = req.body;
 
         // Don't create notification if user is interacting with their own post
         if (recipientId === senderId) {
-          return res.send({
-            success: true,
-            message: "Self notification skipped",
-          });
+          return res.send({ success: true, message: "Self notification skipped" });
         }
 
-        const message = generateNotificationMessage(
-          type,
-          senderName,
-          commentText
-        );
+        const message = generateNotificationMessage(type, senderName, commentText);
 
         const notification = {
           recipientId,
@@ -995,14 +732,11 @@ async function run() {
           message,
           commentText: commentText || "",
           isRead: false,
-          createdAt: new Date(),
+          createdAt: new Date()
         };
 
         const result = await collectionNotifications.insertOne(notification);
-        res.send({
-          success: true,
-          notification: { ...notification, _id: result.insertedId },
-        });
+        res.send({ success: true, notification: { ...notification, _id: result.insertedId } });
       } catch (err) {
         console.error("Error creating notification:", err);
         res.status(500).send({ error: "Failed to create notification" });
@@ -1012,15 +746,15 @@ async function run() {
     // Helper function
     function generateNotificationMessage(type, senderName, commentText = "") {
       switch (type) {
-        case "like":
+        case 'like':
           return `${senderName} liked your post`;
-        case "comment":
+        case 'comment':
           return `${senderName} commented on your post`;
-        case "reply":
+        case 'reply':
           return `${senderName} replied to your comment`;
-        case "follow":
+        case 'follow':
           return `${senderName} started following you`;
-        case "share":
+        case 'share':
           return `${senderName} shared your post`;
         default:
           return `${senderName} interacted with your post`;
@@ -1030,15 +764,15 @@ async function run() {
     // Helper function (যদি আগে থেকে না থাকে)
     function generateNotificationMessage(type, senderName, commentText = "") {
       switch (type) {
-        case "like":
+        case 'like':
           return `${senderName} liked your post`;
-        case "comment":
+        case 'comment':
           return `${senderName} commented on your post`;
-        case "reply":
+        case 'reply':
           return `${senderName} replied to your comment`;
-        case "follow":
+        case 'follow':
           return `${senderName} started following you`;
-        case "share":
+        case 'share':
           return `${senderName} shared your post`;
         default:
           return `${senderName} interacted with your post`;
@@ -1091,8 +825,8 @@ async function run() {
             senderPhoto: userPhoto,
             postId: id,
             postText: originalPost.text,
-            type: "share",
-            commentText: "",
+            type: 'share',
+            commentText: ""
           });
         }
 
@@ -1172,13 +906,9 @@ async function run() {
 
         // NEW: Create reply notification
         // Find the comment author to notify them
-        const originalComment = post.comments.find(
-          (c) => c._id.toString() === commentId
-        );
+        const originalComment = post.comments.find(c => c._id.toString() === commentId);
         if (originalComment && originalComment.authorEmail !== authorEmail) {
-          const commentAuthor = await collectionUsers.findOne({
-            email: originalComment.authorEmail,
-          });
+          const commentAuthor = await collectionUsers.findOne({ email: originalComment.authorEmail });
           if (commentAuthor) {
             await createNotification({
               recipientId: commentAuthor.uid,
@@ -1187,8 +917,8 @@ async function run() {
               senderPhoto: authorPhoto,
               postId: postId,
               postText: post.text,
-              type: "reply",
-              commentText: text,
+              type: 'reply',
+              commentText: text
             });
           }
         }
@@ -1440,8 +1170,7 @@ async function run() {
         );
 
         // NEW: Create comment notification
-        if (post.userId !== senderId) {
-          // Don't notify if user comments on their own post
+        if (post.userId !== senderId) { // Don't notify if user comments on their own post
           await createNotification({
             recipientId: post.userId,
             senderId: senderId,
@@ -1449,8 +1178,8 @@ async function run() {
             senderPhoto: authorPhoto,
             postId: postId,
             postText: post.text,
-            type: "comment",
-            commentText: text,
+            type: 'comment',
+            commentText: text
           });
         }
 
@@ -1461,16 +1190,18 @@ async function run() {
       }
     });
 
-    // for story section ......................................................................
 
-    app.post("/story", upload.single("photo"), async (req, res) => {
+  // for story section ......................................................................
+
+  app.post("/story", upload.single("photo"), async (req, res) => {
       try {
-        const { userName, userPhoto, userId } = req.body;
+        const {  userName, userPhoto,  userId } = req.body;
         const file = req.file;
         const time = new Date().toLocaleTimeString("en-US", {
           timeZone: "Asia/Dhaka",
         });
         const timeC = new Date();
+        
 
         const newStory = {
           userId: userId, //added for userId
@@ -1480,8 +1211,8 @@ async function run() {
           filename: file?.originalname,
           mimetype: file?.mimetype,
           likes: [],
-          createdAt: time,
-          time: timeC,
+          createdAt: time ,
+          time:timeC,
         };
 
         const result = await collectionStory.insertOne(newStory);
@@ -1497,6 +1228,7 @@ async function run() {
       try {
         const posts = await collectionStory.find({}).toArray();
         res.send(posts);
+
       } catch (err) {
         console.error(err);
         res.status(500).send({ error: "Failed to fetch posts" });
@@ -1519,26 +1251,295 @@ async function run() {
       }
     });
 
-    // Ai chat section............................................................................
-    // Initialize Gemini client
 
-    // New route for chatbot
-    app.post("/AiChat", async (req, res) => {
+
+
+// Ai chat section............................................................................
+// Initialize Gemini client
+
+
+// New route for chatbot
+app.post("/AiChat", async (req, res) => {
+  try {
+    const { message } = req.body;
+    if (!message) return res.status(400).json({ error: "Message is required" });
+
+    // Use `generateContent` for a single-turn chat
+    const result = await model.generateContent(message);
+    const reply = result.response.text();
+
+    res.json({ reply });
+  } catch (err) {
+    console.error("Gemini API error:", err);
+    res.status(500).json({ error: "Failed to get AI response" });
+  }
+});
+
+
+
+// chat added.................................................................................
+
+// Get all users (frontend filters out current user locally)
+    app.get("/users", async (req, res) => {
       try {
-        const { message } = req.body;
-        if (!message)
-          return res.status(400).json({ error: "Message is required" });
-
-        // Use `generateContent` for a single-turn chat
-        const result = await model.generateContent(message);
-        const reply = result.response.text();
-
-        res.json({ reply });
+        const users = await collectionUsers.find({})
+          .project({
+            uid: 1,
+            displayName: 1,
+            email: 1,
+            photoURL: 1
+            // NOTE: removed bio as requested
+          })
+          .toArray();
+        res.send(users);
       } catch (err) {
-        console.error("Gemini API error:", err);
-        res.status(500).json({ error: "Failed to get AI response" });
+        console.error("Failed to fetch users:", err);
+        res.status(500).send({ error: "Failed to fetch users" });
       }
     });
+
+    // Search users by query - not used by your current frontend but handy
+    app.get("/users/search/:uid", async (req, res) => {
+      try {
+        const { uid } = req.params;
+        const q = req.query.q || '';
+        if (!q) return res.status(400).send({ error: "Search query required" });
+
+        const users = await collectionUsers.find({
+          uid: { $ne: uid },
+          $or: [
+            { displayName: { $regex: q, $options: "i" } },
+            { email: { $regex: q, $options: "i" } }
+          ]
+        }).project({ uid: 1, displayName: 1, email: 1, photoURL: 1 }).limit(20).toArray();
+
+        res.send(users);
+      } catch (err) {
+        console.error("Failed to search users:", err);
+        res.status(500).send({ error: "Failed to search users" });
+      }
+    });
+
+    // Get messages between two users (frontend calls /messages/:userId1/:userId2)
+    app.get("/messages/:userId1/:userId2", async (req, res) => {
+      try {
+        const { userId1, userId2 } = req.params;
+        const messages = await collectionMessages.find({
+          $or: [
+            { senderId: userId1, receiverId: userId2 },
+            { senderId: userId2, receiverId: userId1 }
+          ]
+        }).sort({ createdAt: 1 }).toArray();
+        res.send(messages);
+      } catch (err) {
+        console.error("Failed to fetch messages:", err);
+        res.status(500).send({ error: "Failed to fetch messages" });
+      }
+    });
+
+    // Mark messages read (keeps same route semantics)
+    app.put("/messages/read", async (req, res) => {
+      try {
+        const { userId, otherUserId } = req.body;
+        if (!userId || !otherUserId) return res.status(400).send({ error: "userId and otherUserId required" });
+
+        await collectionMessages.updateMany(
+          { senderId: otherUserId, receiverId: userId, isRead: false },
+          { $set: { isRead: true, readAt: new Date() } }
+        );
+
+        res.send({ success: true });
+      } catch (err) {
+        console.error("Failed to mark messages as read:", err);
+        res.status(500).send({ error: "Failed to mark messages as read" });
+      }
+    });
+
+    // conversations endpoint similar to earlier code
+    app.get("/conversations/:uid", async (req, res) => {
+      try {
+        const { uid } = req.params;
+        const conversations = await collectionMessages.aggregate([
+          { $match: { $or: [{ senderId: uid }, { receiverId: uid }] } },
+          { $sort: { createdAt: -1 } },
+          {
+            $group: {
+              _id: {
+                $cond: [{ $eq: ["$senderId", uid] }, "$receiverId", "$senderId"]
+              },
+              lastMessage: { $first: "$$ROOT" },
+              unreadCount: {
+                $sum: {
+                  $cond: [{ $and: [{ $eq: ["$receiverId", uid] }, { $eq: ["$isRead", false] }] }, 1, 0]
+                }
+              }
+            }
+          },
+          {
+            $lookup: {
+              from: "users",
+              localField: "_id",
+              foreignField: "uid",
+              as: "user"
+            }
+          },
+          { $unwind: "$user" },
+          {
+            $project: {
+              "user.uid": 1,
+              "user.displayName": 1,
+              "user.photoURL": 1,
+              "user.email": 1,
+              lastMessage: 1,
+              unreadCount: 1
+            }
+          }
+        ]).toArray();
+        res.send(conversations);
+      } catch (err) {
+        console.error("Failed to fetch conversations:", err);
+        res.status(500).send({ error: "Failed to fetch conversations" });
+      }
+    });
+
+    // -------------------------
+    // Socket.IO real-time chat
+    // -------------------------
+//     const connectedUsers = new Map();
+
+//     io.on('connection', (socket) => {
+//       console.log('Socket connected:', socket.id);
+
+//       // When client notifies server of logged-in user
+//       socket.on('user_connected', (userId) => {
+//         if (!userId) return;
+//         connectedUsers.set(userId, socket.id);
+
+//         // Broadcast to others that this user is online
+//         socket.broadcast.emit('user_online', userId);
+//         console.log(`User ${userId} connected as socket ${socket.id}`);
+//       });
+
+//       // Sending a message
+//       socket.on('send_message', async (data) => {
+//         try {
+//           // normalize / ensure fields (senderId, receiverId required)
+//           const messageData = {
+//             senderId: data.senderId,
+//             receiverId: data.receiverId,
+//             text: data.text ?? undefined,
+//             image: data.image ?? undefined,
+//             isRead: false,
+//             createdAt: new Date()
+//           };
+
+//           const result = await collectionMessages.insertOne(messageData);
+//           const savedMessage = { ...messageData, _id: result.insertedId };
+
+//           // Emit to receiver if online
+//           const receiverSocketId = connectedUsers.get(data.receiverId);
+//           if (receiverSocketId) {
+//             io.to(receiverSocketId).emit('receive_message', savedMessage);
+//           }
+
+//           // Confirmation to sender
+//           socket.emit('message_sent', savedMessage);
+
+//           console.log(`Message saved from ${data.senderId} to ${data.receiverId}`);
+//         } catch (err) {
+//           console.error("Failed to send message:", err);
+//           socket.emit('message_error', { error: 'Failed to send message' });
+//         }
+//       });
+
+//       socket.on('send_message', async (data) => {
+//   try {
+//     // normalize / ensure fields
+//     const messageData = {
+//       senderId: data.senderId,
+//       receiverId: data.receiverId,
+//       text: data.text ?? undefined,
+//       image: data.image ?? undefined,
+//       isRead: false,
+//       createdAt: new Date()
+//     };
+
+//     // Save message in DB
+//     const result = await collectionMessages.insertOne(messageData);
+//     const savedMessage = { ...messageData, _id: result.insertedId };
+
+//     // Emit to receiver if online
+//     const receiverSocketId = connectedUsers.get(data.receiverId);
+//     if (receiverSocketId) {
+//       io.to(receiverSocketId).emit('receive_message', savedMessage);
+//     }
+
+//     // Confirmation back to sender
+//     socket.emit('message_sent', savedMessage);
+
+//     console.log(`Message saved from ${data.senderId} to ${data.receiverId}`);
+
+    
+//   } catch (err) {
+//     console.error("Failed to send message:", err);
+//     socket.emit('message_error', { error: 'Failed to send message' });
+//   }
+// });
+
+//       // Typing indicator
+//       socket.on('typing_start', (data) => {
+//         const receiverSocketId = connectedUsers.get(data.receiverId);
+//         if (receiverSocketId) {
+//           io.to(receiverSocketId).emit('user_typing', { senderId: data.senderId, isTyping: true });
+//         }
+//       });
+
+//       socket.on('typing_stop', (data) => {
+//         const receiverSocketId = connectedUsers.get(data.receiverId);
+//         if (receiverSocketId) {
+//           io.to(receiverSocketId).emit('user_typing', { senderId: data.senderId, isTyping: false });
+//         }
+//       });
+
+//       // Mark messages read via socket
+//       socket.on('mark_messages_read', async (data) => {
+//         try {
+//           const { userId, otherUserId } = data;
+//           await collectionMessages.updateMany(
+//             { senderId: otherUserId, receiverId: userId, isRead: false },
+//             { $set: { isRead: true, readAt: new Date() } }
+//           );
+
+          
+
+
+//           const otherUserSocketId = connectedUsers.get(otherUserId);
+//           if (otherUserSocketId) {
+//             io.to(otherUserSocketId).emit('messages_read', { readerId: userId });
+//           }
+//         } catch (err) {
+//           console.error("Failed to mark messages read via socket:", err);
+//         }
+//       });
+
+//       // Disconnect handling
+//       socket.on('disconnect', () => {
+//         for (const [userId, socketId] of connectedUsers.entries()) {
+//           if (socketId === socket.id) {
+//             connectedUsers.delete(userId);
+//             socket.broadcast.emit('user_offline', userId);
+//             console.log(`User ${userId} disconnected`);
+//             break;
+//           }
+//         }
+//       });
+//     });
+ 
+// chat end....................................................................................
+
+
+
+
   } catch (err) {
     console.error(err);
   }
@@ -1546,4 +1547,6 @@ async function run() {
 
 run().catch(console.dir);
 
-server.listen(port, () => console.log(`Server running on port ${port}`));
+app.listen(port, () => {
+  console.log(`Server is running on port ${port}`);
+});
