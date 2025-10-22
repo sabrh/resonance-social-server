@@ -1,3 +1,4 @@
+const http = require("http");
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
@@ -6,10 +7,9 @@ const server = http.createServer(app);
 require("dotenv").config();
 const port = process.env.PORT || 3000;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-import { v2 as cloudinary } from "cloudinary";
-import mongoose from "mongoose";
-import { Server } from "socket.io";
-
+//const mongoose = require("mongoose");
+const cloudinary = require("cloudinary").v2;
+const { Server } = require("socket.io");
 
 app.use(cors());
 app.use(express.json());
@@ -68,13 +68,14 @@ app.get("/", (req, res) => {
 
 async function run() {
   try {
-    // await client.connect();
+     await client.connect();
     console.log("Connected to MongoDB successfully!");
 
     const collectionUsers = client.db("createPostDB").collection("users");
     const collectionPost = client.db("createPostDB").collection("createPost");
     const collectionNotifications = client.db("createPostDB").collection("notifications"); 
     const collectionStory = client.db("createStoryDB").collection("story");
+    const collectionMessages = client.db("createMessageDB").collection("messages");
 
     // delete story auto
 
@@ -761,24 +762,6 @@ async function run() {
       }
     });
 
-    // Helper function
-    function generateNotificationMessage(type, senderName, commentText = "") {
-      switch (type) {
-        case 'like':
-          return `${senderName} liked your post`;
-        case 'comment':
-          return `${senderName} commented on your post`;
-        case 'reply':
-          return `${senderName} replied to your comment`;
-        case 'follow':
-          return `${senderName} started following you`;
-        case 'share':
-          return `${senderName} shared your post`;
-        default:
-          return `${senderName} interacted with your post`;
-      }
-    }
-
     // Helper function (যদি আগে থেকে না থাকে)
     function generateNotificationMessage(type, senderName, commentText = "") {
       switch (type) {
@@ -1293,167 +1276,181 @@ app.post("/AiChat", async (req, res) => {
   }
 });
 
+// chat start ...................................................................................
 
+const { ObjectId } = require("mongodb");
+const express = require("express");
+const cloudinary = require("cloudinary").v2;
 
-// chat added.................................................................................
-
-// Get all users (frontend filters out current user locally)
-// model to store messages in mongodb
-const messageSchema = new mongoose.Schema({
-  senderId: {type: mongoose.Schema.Types.ObjectId, ref: "User", required: true},
-  receiverId: {type: mongoose.Schema.Types.ObjectId, ref: "User", required: true},
-  text: { type: String },
-  image: { type: String },
-  seen: { type: Boolean, default: false }
-}, {timestamps: true});
-
-// cloudinary config for send/receive images
-    
+// cloudinary config
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
-})
+});
 
-const Message = mongoose.model("Message", messageSchema);
-  
-app.get("/users", async (req, res) => {
-      try {
-        const users = await collectionUsers.find({})
-          .project({
-            uid: 1,
-            displayName: 1,
-            email: 1,
-            photoURL: 1
-          })
-          .toArray();
-        res.send(users);
+// ---------- USERS ----------
 
-        // count number of messages not seen
-        const unseenMessages ={}
-        const promises = filteredUsers.map(async (user) => {
-          const messages = await Message.find({senderId: user._id, receiverId: userId, seen: false})
-          if(messages.length > 0){
-            unseenMessages[user._id] = messages.length;
-          }
-        })
-        await Promise.all(promises);
-        res.json({success: true, users: filteredUsers, unseenMessages})
-      } catch (err) {
-        console.error("Failed to fetch users:", err);
-        res.status(500).send({ error: "Failed to fetch users" });
+// get all users (frontend filters out current user locally)
+const getUsers = async (req, res) => {
+  try {
+    const currentUserId = new ObjectId(req.user._id);
 
-        console.log(err.message);
-        res.json({success: false, message: err.message})
-      }
+    const users = await collectionUsers
+      .find({ _id: { $ne: currentUserId } }) // filter out current user
+      .project({ uid: 1, displayName: 1, email: 1, photoURL: 1 })
+      .toArray();
+
+    // count number of unseen messages for each user
+    const unseenMessages = {};
+    const promises = users.map(async (user) => {
+      const count = await collectionMessages.countDocuments({
+        senderId: new ObjectId(user._id),
+        receiverId: currentUserId,
+        seen: false,
+      });
+      if (count > 0) unseenMessages[user._id] = count;
     });
+    await Promise.all(promises);
 
-    // get all messages for selected user
-    const getMessages = async (req, res)=>{
-      try {
-        const { id: selectedUserId } = req.params;
-        const myId = req.user._id;
+    res.json({ success: true, users, unseenMessages });
+  } catch (err) {
+    console.error("Failed to fetch users:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
 
-        const messages = await Message.find({
-          $or: [
-            {senderId: myId, receiverId: selectedUserId},
-            {senderId: selectedUserId, receiverId: myId},
-          ]
-        })
-        await Message.updateMany({senderId: selectedUserId, receiverId: myId},
-          {seen: true}
-        );
-        res.json({success: true, messages})
+// search users by query
+const searchUsers = async (req, res) => {
+  try {
+    const { uid } = req.params;
+    const q = req.query.q || "";
+    if (!q) return res.status(400).json({ error: "Search query required" });
 
-      } catch (error) {
-        console.log(error.message);
-        res.json({success: false, message: error.message})
-      }
+    const users = await collectionUsers
+      .find({
+        uid: { $ne: uid },
+        $or: [
+          { displayName: { $regex: q, $options: "i" } },
+          { email: { $regex: q, $options: "i" } },
+        ],
+      })
+      .project({ uid: 1, displayName: 1, email: 1, photoURL: 1 })
+      .limit(20)
+      .toArray();
+
+    res.json({ success: true, users });
+  } catch (err) {
+    console.error("Failed to search users:", err);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// ---------- MESSAGES ----------
+
+// get all messages for selected user
+const getMessages = async (req, res) => {
+  try {
+    const selectedUserId = new ObjectId(req.params.id);
+    const myId = new ObjectId(req.user._id);
+
+    const messages = await collectionMessages
+      .find({
+        $or: [
+          { senderId: myId, receiverId: selectedUserId },
+          { senderId: selectedUserId, receiverId: myId },
+        ],
+      })
+      .sort({ createdAt: 1 }) // chronological
+      .toArray();
+
+    // mark received messages as seen
+    await collectionMessages.updateMany(
+      { senderId: selectedUserId, receiverId: myId, seen: false },
+      { $set: { seen: true, updatedAt: new Date() } }
+    );
+
+    res.json({ success: true, messages });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// mark a single message as seen
+const markMessageAsSeen = async (req, res) => {
+  try {
+    const messageId = new ObjectId(req.params.id);
+    await collectionMessages.updateOne(
+      { _id: messageId },
+      { $set: { seen: true, updatedAt: new Date() } }
+    );
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// send message to selected user
+const sendMessage = async (req, res) => {
+  try {
+    const { text, image } = req.body;
+    const receiverId = new ObjectId(req.params.id);
+    const senderId = new ObjectId(req.user._id);
+
+    let imageUrl = null;
+    if (image) {
+      const uploadResponse = await cloudinary.uploader.upload(image);
+      imageUrl = uploadResponse.secure_url;
     }
 
-    // api to mark message as seen using message id
-    const markMessageAsSeen = async(req, res)=>{
-      try{
-        const { id } = req.params;
-        await Message.findByIdAndUpdate(id, {seen: true})
-        res.json({success: true})
-      } catch (error) {
-        console.log(error.message);
-        res.json({success: false, message: error.message})
-      }
+    const newMessage = {
+      senderId,
+      receiverId,
+      text,
+      image: imageUrl,
+      seen: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const result = await collectionMessages.insertOne(newMessage);
+
+    // emit the new message to receiver socket if connected
+    const receiverSocketId = userSocketMap[receiverId];
+    if (receiverSocketId) {
+      io.to(receiverSocketId).emit("newMessage", {
+        ...newMessage,
+        _id: result.insertedId,
+      });
     }
 
-    //send message to selected user
-    const sendMessage = async (req, res) =>{
-      try {
-        const {text, image} = req.body;
-        const receiverId = req.params.id;
-        const senderId = req.user._id;
+    res.json({ success: true, newMessage: { ...newMessage, _id: result.insertedId } });
+  } catch (err) {
+    console.error(err.message);
+    res.status(500).json({ success: false, message: err.message });
+  }
+};
 
-        let imageUrl;
-        if(image) {
-          const uploadResponse = await cloudinary.uploader.upload(image);
-          imageUrl = uploadResponse.secure_url;
-        }
+// ---------- ROUTER ----------
+const messageRouter = express.Router();
 
-        const newMessage = await Message.create({
-          senderId,
-          receiverId,
-          text,
-          image: imageUrl,
-        })
+messageRouter.get("/users", getUsers);
+messageRouter.get("/search/:uid", searchUsers);
+messageRouter.get("/:id", getMessages);
+messageRouter.put("/mark/:id", markMessageAsSeen);
+messageRouter.post("/send/:id", sendMessage);
 
-        // emit the new message to receiver socket
-        const receiverSocketId = userSocketMap[receiverId]
-        if (receiverSocketId){
-          io.to(receiverSocketId).emit("newMessage", newMessage)
-        }
+app.use("/api/messages", messageRouter);
 
-        res.json({success: true, newMessage});
+// chat end ...................................................................................
 
-      } catch (error) {
-        console.log(error.message);
-        res.json({success: false, message: error.message})
-      }
-    }
 
-    // Search users by query - not used by your current frontend but handy
-    app.get("/users/search/:uid", async (req, res) => {
-      try {
-        const { uid } = req.params;
-        const q = req.query.q || '';
-        if (!q) return res.status(400).send({ error: "Search query required" });
 
-        const users = await collectionUsers.find({
-          uid: { $ne: uid },
-          $or: [
-            { displayName: { $regex: q, $options: "i" } },
-            { email: { $regex: q, $options: "i" } }
-          ]
-        }).project({ uid: 1, displayName: 1, email: 1, photoURL: 1 }).limit(20).toArray();
 
-        res.send(users);
-      } catch (err) {
-        console.error("Failed to search users:", err);
-        res.status(500).send({ error: "Failed to search users" });
-      }
-    });
 
-    // message router
-    const messageRouter = express.Router();
 
-    messageRouter.get("/users", users);
-    messageRouter.get("/:id", getMessages);
-    messageRouter.put("mark/:id", markMessageAsSeen);
-    messageRouter.post("/send/:id", sendMessage);
-
-    app.use("/api/messages", messageRouter);
-
-    
-   
-
- 
-// chat end....................................................................................
 
 
 
@@ -1464,6 +1461,6 @@ app.get("/users", async (req, res) => {
 
 run().catch(console.dir);
 
-app.listen(port, () => {
+server.listen(port, () => {
   console.log(`Server is running on port ${port}`);
 });
