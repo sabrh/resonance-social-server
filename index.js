@@ -7,41 +7,23 @@ const server = http.createServer(app);
 require("dotenv").config();
 const port = process.env.PORT || 3000;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
-//const mongoose = require("mongoose");
 const cloudinary = require("cloudinary").v2;
 const { Server } = require("socket.io");
 
-app.use(cors());
-app.use(express.json());
+app.use(cors({ origin: true, credentials: true }));
+app.use(express.json({ limit: "10mb" }));
 
 // Multer setup (memory storage for now)
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
-// Initialize socket.io server
-const io = new Server(server, {
-  cors: {origin: "*"}
-})
+// Cloudinary config
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
-// Store online users
-const userSocketMap = {};
-
-// Socket.io connection handler
-io.on("connection", (socket)=>{
-  const userId = socket.handshake.query.userId;
-  console.log("User Connected", userId);
-
-  if(userId) userSocketMap[userId] = socket.id;
-
-  //Emit online users to all connected clients
-  io.emit("getOnlineUsers", Object.keys(userSocketMap))
-
-  socket.on("disconnect", ()=>{
-    console.log("User Disconnected", userId);
-    delete userSocketMap[userId];
-    io.emit("getOnlineUsers", Object.keys(userSocketMap))
-  })
-})
 
 // for Ai
 
@@ -68,14 +50,14 @@ app.get("/", (req, res) => {
 
 async function run() {
   try {
-     await client.connect();
+    await client.connect();
     console.log("Connected to MongoDB successfully!");
 
     const collectionUsers = client.db("createPostDB").collection("users");
     const collectionPost = client.db("createPostDB").collection("createPost");
     const collectionNotifications = client.db("createPostDB").collection("notifications"); 
     const collectionStory = client.db("createStoryDB").collection("story");
-    const collectionMessages = client.db("createMessageDB").collection("messages");
+    const collectionMessages = client.db("createMessages").collection("messages");
 
     // delete story auto
 
@@ -179,7 +161,7 @@ async function run() {
         res.status(500).send({ error: "server error" });
       }
     });
-
+    
     // Get user by uid
     app.get("/users/:uid", async (req, res) => {
       try {
@@ -1278,182 +1260,176 @@ app.post("/AiChat", async (req, res) => {
 
 // chat start ...................................................................................
 
-const { ObjectId } = require("mongodb");
-const express = require("express");
-const cloudinary = require("cloudinary").v2;
-
-// cloudinary config
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
-
-// ---------- USERS ----------
-
-// get all users (frontend filters out current user locally)
-const getUsers = async (req, res) => {
-  try {
-    const currentUserId = new ObjectId(req.user._id);
-
-    const users = await collectionUsers
-      .find({ _id: { $ne: currentUserId } }) // filter out current user
-      .project({ uid: 1, displayName: 1, email: 1, photoURL: 1 })
-      .toArray();
-
-    // count number of unseen messages for each user
-    const unseenMessages = {};
-    const promises = users.map(async (user) => {
-      const count = await collectionMessages.countDocuments({
-        senderId: new ObjectId(user._id),
-        receiverId: currentUserId,
-        seen: false,
-      });
-      if (count > 0) unseenMessages[user._id] = count;
+    // Get all users for chat
+    app.get("/users", async (req, res) => {
+      try {
+        const users = await collectionUsers.find({}, {
+          projection: { _id: 1, uid: 1, displayName: 1, photoURL: 1, email: 1 }
+        }).toArray();
+        res.json(users);
+      } catch (err) {
+        console.error("Failed to fetch users:", err);
+        res.status(500).json({ error: "Failed to fetch users" });
+      }
     });
-    await Promise.all(promises);
 
-    res.json({ success: true, users, unseenMessages });
-  } catch (err) {
-    console.error("Failed to fetch users:", err);
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
+    // Create or update user for chat
+    app.post("/users", async (req, res) => {
+      try {
+        const { uid, displayName, email, photoURL } = req.body;
+        if (!uid) return res.status(400).json({ error: "uid required" });
 
-// search users by query
-const searchUsers = async (req, res) => {
-  try {
-    const { uid } = req.params;
-    const q = req.query.q || "";
-    if (!q) return res.status(400).json({ error: "Search query required" });
+        const userDoc = {
+          uid,
+          displayName: displayName || null,
+          email: email || null,
+          photoURL: photoURL || null,
+          createdAt: new Date(),
+          updatedAt: new Date()
+        };
 
-    const users = await collectionUsers
-      .find({
-        uid: { $ne: uid },
-        $or: [
-          { displayName: { $regex: q, $options: "i" } },
-          { email: { $regex: q, $options: "i" } },
-        ],
-      })
-      .project({ uid: 1, displayName: 1, email: 1, photoURL: 1 })
-      .limit(20)
-      .toArray();
+        const result = await collectionUsers.updateOne(
+          { uid },
+          { $set: userDoc },
+          { upsert: true }
+        );
 
-    res.json({ success: true, users });
-  } catch (err) {
-    console.error("Failed to search users:", err);
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
+        res.json({ success: true, user: userDoc });
+      } catch (err) {
+        console.error("Failed to upsert user:", err);
+        res.status(500).json({ error: "Failed to upsert user" });
+      }
+    });
 
-// ---------- MESSAGES ----------
+    // Get messages between two users
+    app.get("/messages/:userId1/:userId2", async (req, res) => {
+      try {
+        const { userId1, userId2 } = req.params;
+        
+        const messages = await collectionMessages
+          .find({
+            $or: [
+              { senderId: userId1, receiverId: userId2 },
+              { senderId: userId2, receiverId: userId1 }
+            ]
+          })
+          .sort({ createdAt: 1 })
+          .toArray();
 
-// get all messages for selected user
-const getMessages = async (req, res) => {
-  try {
-    const selectedUserId = new ObjectId(req.params.id);
-    const myId = new ObjectId(req.user._id);
+        res.json(messages);
+      } catch (err) {
+        console.error("Failed to fetch messages:", err);
+        res.status(500).json({ error: "Failed to fetch messages" });
+      }
+    });
 
-    const messages = await collectionMessages
-      .find({
-        $or: [
-          { senderId: myId, receiverId: selectedUserId },
-          { senderId: selectedUserId, receiverId: myId },
-        ],
-      })
-      .sort({ createdAt: 1 }) // chronological
-      .toArray();
+    // Upload image for chat
+    app.post("/upload/image", upload.single("image"), async (req, res) => {
+      try {
+        if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+        
+        const buffer = req.file.buffer;
+        const streamifier = require("streamifier");
+        
+        const result = await new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+            { folder: "chat_images" },
+            (error, result) => {
+              if (error) reject(error);
+              else resolve(result);
+            }
+          );
+          streamifier.createReadStream(buffer).pipe(stream);
+        });
 
-    // mark received messages as seen
-    await collectionMessages.updateMany(
-      { senderId: selectedUserId, receiverId: myId, seen: false },
-      { $set: { seen: true, updatedAt: new Date() } }
-    );
+        res.json({ url: result.secure_url, public_id: result.public_id });
+      } catch (err) {
+        console.error("Upload error:", err);
+        res.status(500).json({ error: "Upload failed" });
+      }
+    });
 
-    res.json({ success: true, messages });
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
+    // ============================
+    // SOCKET.IO SETUP - FIXED
+    // ============================
+    const io = new Server(server, {
+      cors: {
+        origin: true,
+        methods: ["GET", "POST"],
+        credentials: true
+      }
+    });
 
-// mark a single message as seen
-const markMessageAsSeen = async (req, res) => {
-  try {
-    const messageId = new ObjectId(req.params.id);
-    await collectionMessages.updateOne(
-      { _id: messageId },
-      { $set: { seen: true, updatedAt: new Date() } }
-    );
-    res.json({ success: true });
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
+    const onlineUsersMap = new Map();
 
-// send message to selected user
-const sendMessage = async (req, res) => {
-  try {
-    const { text, image } = req.body;
-    const receiverId = new ObjectId(req.params.id);
-    const senderId = new ObjectId(req.user._id);
+    io.on("connection", (socket) => {
+      console.log("Socket connected:", socket.id);
 
-    let imageUrl = null;
-    if (image) {
-      const uploadResponse = await cloudinary.uploader.upload(image);
-      imageUrl = uploadResponse.secure_url;
-    }
-
-    const newMessage = {
-      senderId,
-      receiverId,
-      text,
-      image: imageUrl,
-      seen: false,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    const result = await collectionMessages.insertOne(newMessage);
-
-    // emit the new message to receiver socket if connected
-    const receiverSocketId = userSocketMap[receiverId];
-    if (receiverSocketId) {
-      io.to(receiverSocketId).emit("newMessage", {
-        ...newMessage,
-        _id: result.insertedId,
+      // User connects
+      socket.on("user_connected", (userId) => {
+        if (!userId) return;
+        
+        console.log("User connected:", userId);
+        onlineUsersMap.set(userId, socket.id);
+        
+        // Notify others that this user is online
+        socket.broadcast.emit("user_online", userId);
       });
-    }
 
-    res.json({ success: true, newMessage: { ...newMessage, _id: result.insertedId } });
-  } catch (err) {
-    console.error(err.message);
-    res.status(500).json({ success: false, message: err.message });
-  }
-};
+      // Send message
+      socket.on("send_message", async (messageData) => {
+        try {
+          console.log("Received message:", messageData);
+          
+          const messageDoc = {
+            _id: messageData._id || new ObjectId().toString(),
+            senderId: messageData.senderId,
+            receiverId: messageData.receiverId,
+            text: messageData.text || null,
+            image: messageData.image || null,
+            createdAt: new Date(messageData.createdAt || Date.now())
+          };
 
-// ---------- ROUTER ----------
-const messageRouter = express.Router();
+          // Save to database
+          await collectionMessages.insertOne(messageDoc);
+          console.log("Message saved to DB");
 
-messageRouter.get("/users", getUsers);
-messageRouter.get("/search/:uid", searchUsers);
-messageRouter.get("/:id", getMessages);
-messageRouter.put("/mark/:id", markMessageAsSeen);
-messageRouter.post("/send/:id", sendMessage);
+          // Get receiver's socket ID
+          const receiverSocketId = onlineUsersMap.get(messageData.receiverId);
+          const senderSocketId = onlineUsersMap.get(messageData.senderId);
 
-app.use("/api/messages", messageRouter);
+          // Send to receiver if online
+          if (receiverSocketId) {
+            io.to(receiverSocketId).emit("receive_message", messageDoc);
+            console.log("Message sent to receiver:", messageData.receiverId);
+          }
 
-// chat end ...................................................................................
+          // Also send back to sender for optimistic update confirmation
+          if (senderSocketId) {
+            io.to(senderSocketId).emit("receive_message", messageDoc);
+            console.log("Message echoed to sender:", messageData.senderId);
+          }
 
+        } catch (err) {
+          console.error("Error handling message:", err);
+        }
+      });
 
-
-
-
-
-
-
-
+      // Handle disconnection
+      socket.on("disconnect", () => {
+        console.log("Socket disconnected:", socket.id);
+        
+        // Find and remove the disconnected user
+        for (const [userId, socketId] of onlineUsersMap.entries()) {
+          if (socketId === socket.id) {
+            onlineUsersMap.delete(userId);
+            socket.broadcast.emit("user_offline", userId);
+            console.log("User went offline:", userId);
+            break;
+          }
+        }
+      });
+    });
   } catch (err) {
     console.error(err);
   }
