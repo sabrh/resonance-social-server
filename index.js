@@ -1,21 +1,19 @@
-const http = require("http");
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const app = express();
-const server = http.createServer(app);
 require("dotenv").config();
 const port = process.env.PORT || 3000;
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+app.use(cors());
+app.use(express.json());
+
+// chat head start..........................................................
+const http = require("http");
 const cloudinary = require("cloudinary").v2;
 const { Server } = require("socket.io");
+const server = http.createServer(app);
 
-app.use(cors({ origin: true, credentials: true }));
-app.use(express.json({ limit: "10mb" }));
-
-// Multer setup (memory storage for now)
-const storage = multer.memoryStorage();
-const upload = multer({ storage: storage });
 
 // Cloudinary config
 cloudinary.config({
@@ -23,6 +21,25 @@ cloudinary.config({
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
+
+
+app.use(cors({ origin: true, credentials: true }));
+app.use(express.json({ limit: "10mb" }));
+
+// end...........................................................
+
+// Multer setup (memory storage for now)
+const storage = multer.memoryStorage();
+const upload = multer({ storage: storage });
+
+// Socket.IO setup (allow your frontend origin)
+// const io = new Server(server, {
+//   cors: {
+//     origin: process.env.CLIENT_ORIGIN || "http://localhost:5174",
+//     methods: ["GET", "POST"]
+//   }
+// });
+
 
 
 // for Ai
@@ -50,7 +67,7 @@ app.get("/", (req, res) => {
 
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
     console.log("Connected to MongoDB successfully!");
 
     const collectionUsers = client.db("createPostDB").collection("users");
@@ -286,7 +303,7 @@ app.post("/notifications", async (req, res) => {
         res.status(500).send({ error: "server error" });
       }
     });
-    
+
     // Get user by uid
     app.get("/users/:uid", async (req, res) => {
       try {
@@ -751,69 +768,7 @@ app.post("/notifications", async (req, res) => {
     });
 
 
-    // server.js - notifications collection এ এই API টি যোগ করুন
-
-    // Create notification
-    // server.js - notifications collection এ এই API টি নিশ্চিত করুন
-    app.post("/notifications", async (req, res) => {
-      try {
-        const {
-          recipientId,
-          senderId,
-          senderName,
-          senderPhoto,
-          postId,
-          postText,
-          type,
-          commentText
-        } = req.body;
-
-        // Don't create notification if user is interacting with their own post
-        if (recipientId === senderId) {
-          return res.send({ success: true, message: "Self notification skipped" });
-        }
-
-        const message = generateNotificationMessage(type, senderName, commentText);
-
-        const notification = {
-          recipientId,
-          senderId,
-          senderName,
-          senderPhoto,
-          postId,
-          postText: postText ? postText.substring(0, 100) : "",
-          type,
-          message,
-          commentText: commentText || "",
-          isRead: false,
-          createdAt: new Date()
-        };
-
-        const result = await collectionNotifications.insertOne(notification);
-        res.send({ success: true, notification: { ...notification, _id: result.insertedId } });
-      } catch (err) {
-        console.error("Error creating notification:", err);
-        res.status(500).send({ error: "Failed to create notification" });
-      }
-    });
-
-    // Helper function (যদি আগে থেকে না থাকে)
-    function generateNotificationMessage(type, senderName, commentText = "") {
-      switch (type) {
-        case 'like':
-          return `${senderName} liked your post`;
-        case 'comment':
-          return `${senderName} commented on your post`;
-        case 'reply':
-          return `${senderName} replied to your comment`;
-        case 'follow':
-          return `${senderName} started following you`;
-        case 'share':
-          return `${senderName} shared your post`;
-        default:
-          return `${senderName} interacted with your post`;
-      }
-    }
+    
 
     
     // Share a post
@@ -1312,6 +1267,9 @@ app.post("/AiChat", async (req, res) => {
   }
 });
 
+
+
+
 // chat start ...................................................................................
 
     // Get all users for chat
@@ -1484,6 +1442,14 @@ app.post("/AiChat", async (req, res) => {
         }
       });
     });
+
+
+ 
+// chat end....................................................................................
+
+
+
+
   } catch (err) {
     console.error(err);
   }
@@ -1491,6 +1457,6 @@ app.post("/AiChat", async (req, res) => {
 
 run().catch(console.dir);
 
-server.listen(port, () => {
+app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
 });
