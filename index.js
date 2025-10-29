@@ -1447,8 +1447,35 @@ app.post("/AiChat", async (req, res) => {
  
 // chat end....................................................................................
 
+// follower show.........................................................................
 
+// Get followers or following users list
+    app.get("/users/:uid/:type", async (req, res) => {
+      try {
+        const { uid, type } = req.params;
+        if (!["followers", "following"].includes(type)) {
+          return res.status(400).send({ error: "Invalid type" });
+        }
 
+        const user = await collectionUsers.findOne({ uid });
+        if (!user) return res.status(404).send({ error: "User not found" });
+
+        const ids = user[type] || [];
+        if (ids.length === 0) return res.send([]);
+
+        const usersList = await collectionUsers
+          .find({ uid: { $in: ids } })
+          .project({ uid: 1, displayName: 1, photoURL: 1, username: 1 })
+          .toArray();
+
+        res.send(usersList);
+      } catch (err) {
+        console.error(err);
+        res.status(500).send({ error: "Failed to fetch users" });
+      }
+    });
+
+// end follower show..............................................................
 
   } catch (err) {
     console.error(err);
