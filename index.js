@@ -183,6 +183,33 @@ async function run() {
       }
     });
 
+   // ------------------- new code for profile ----------------
+   // redoy-ghosh-antu
+// Update user's profile photo
+app.put("/users/:uid/photo", async (req, res) => {
+  try {
+    const { uid } = req.params;
+    const { photoURL } = req.body;
+
+    if (!photoURL) return res.status(400).send({ error: "photoURL required" });
+
+    const result = await collectionUsers.updateOne({ uid }, { $set: { photoURL } });
+
+     // Also update in posts (for user’s profile picture in posts)
+    await collectionPost.updateMany(
+      { userId: uid },
+      { $set: { userPhoto: photoURL } }
+    );
+
+    res.send({ success: true, updated: result.modifiedCount });
+  } catch (err) {
+    console.error("Photo update failed:", err);
+    res.status(500).send({ error: "Server error" });
+  }
+});
+
+
+
     // Get user by uid
     app.get("/users/:uid", async (req, res) => {
       try {
