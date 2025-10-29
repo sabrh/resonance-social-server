@@ -1301,56 +1301,7 @@ app.post("/AiChat", async (req, res) => {
       }
     });
 
-    // Get messages between two users
-    app.get("/messages/:userId1/:userId2", async (req, res) => {
-      try {
-        const { userId1, userId2 } = req.params;
-        
-        const messages = await collectionMessages
-          .find({
-            $or: [
-              { senderId: userId1, receiverId: userId2 },
-              { senderId: userId2, receiverId: userId1 }
-            ]
-          })
-          .sort({ createdAt: 1 })
-          .toArray();
-
-        res.json(messages);
-      } catch (err) {
-        console.error("Failed to fetch messages:", err);
-        res.status(500).json({ error: "Failed to fetch messages" });
-      }
-    });
-
-    // Upload image for chat
-    app.post("/upload/image", upload.single("image"), async (req, res) => {
-      try {
-        if (!req.file) return res.status(400).json({ error: "No file uploaded" });
-        
-        const buffer = req.file.buffer;
-        const streamifier = require("streamifier");
-        
-        const result = await new Promise((resolve, reject) => {
-          const stream = cloudinary.uploader.upload_stream(
-            { folder: "chat_images" },
-            (error, result) => {
-              if (error) reject(error);
-              else resolve(result);
-            }
-          );
-          streamifier.createReadStream(buffer).pipe(stream);
-        });
-
-        res.json({ url: result.secure_url, public_id: result.public_id });
-      } catch (err) {
-        console.error("Upload error:", err);
-        res.status(500).json({ error: "Upload failed" });
-      }
-    });
-
-    // ============================
-    // SOCKET.IO SETUP - FIXED
+    // SOCKET.IO SETUP - FIXED VERSION
     // ============================
     const io = new Server(server, {
       cors: {
@@ -1374,44 +1325,121 @@ app.post("/AiChat", async (req, res) => {
         
         // Notify others that this user is online
         socket.broadcast.emit("user_online", userId);
+        
+        // Send current online users to the connected user
+        const onlineUsers = Array.from(onlineUsersMap.keys());
+        socket.emit("online_users", onlineUsers);
       });
 
-      // Send message
+      // Join room for private messaging
+      socket.on("join_room", (roomId) => {
+        socket.join(roomId);
+        console.log(`User ${socket.id} joined room: ${roomId}`);
+      });
+
+      // Send message - FIXED VERSION
       socket.on("send_message", async (messageData) => {
         try {
           console.log("Received message:", messageData);
           
+          if (!messageData.senderId || !messageData.receiverId) {
+            console.error("Missing senderId or receiverId");
+            return;
+          }
+
           const messageDoc = {
-            _id: messageData._id || new ObjectId().toString(),
+            _id: new ObjectId().toString(),
             senderId: messageData.senderId,
             receiverId: messageData.receiverId,
             text: messageData.text || null,
             image: messageData.image || null,
-            createdAt: new Date(messageData.createdAt || Date.now())
+            createdAt: new Date(),
+            read: false
           };
 
           // Save to database
-          await collectionMessages.insertOne(messageDoc);
-          console.log("Message saved to DB");
+          const result = await collectionMessages.insertOne(messageDoc);
+          console.log("Message saved to DB:", result.insertedId);
 
-          // Get receiver's socket ID
+          // Create room ID for these two users
+          const roomId = [messageData.senderId, messageData.receiverId]
+            .sort()
+            .join('_');
+
+          // Send to room (both users)
+          io.to(roomId).emit("receive_message", {
+            ...messageDoc,
+            _id: result.insertedId.toString()
+          });
+
+          // Also send individual events for reliability
           const receiverSocketId = onlineUsersMap.get(messageData.receiverId);
-          const senderSocketId = onlineUsersMap.get(messageData.senderId);
-
-          // Send to receiver if online
           if (receiverSocketId) {
-            io.to(receiverSocketId).emit("receive_message", messageDoc);
-            console.log("Message sent to receiver:", messageData.receiverId);
+            io.to(receiverSocketId).emit("receive_message", {
+              ...messageDoc,
+              _id: result.insertedId.toString()
+            });
           }
 
-          // Also send back to sender for optimistic update confirmation
+          // Send back to sender for confirmation
+          const senderSocketId = onlineUsersMap.get(messageData.senderId);
           if (senderSocketId) {
-            io.to(senderSocketId).emit("receive_message", messageDoc);
-            console.log("Message echoed to sender:", messageData.senderId);
+            io.to(senderSocketId).emit("message_sent", {
+              ...messageDoc,
+              _id: result.insertedId.toString()
+            });
           }
 
         } catch (err) {
           console.error("Error handling message:", err);
+          // Notify sender about the error
+          const senderSocketId = onlineUsersMap.get(messageData.senderId);
+          if (senderSocketId) {
+            io.to(senderSocketId).emit("message_error", {
+              error: "Failed to send message",
+              tempId: messageData.tempId
+            });
+          }
+        }
+      });
+
+      // Handle typing indicators
+      socket.on("typing_start", (data) => {
+        const { receiverId, senderId } = data;
+        const receiverSocketId = onlineUsersMap.get(receiverId);
+        if (receiverSocketId) {
+          io.to(receiverSocketId).emit("user_typing", { senderId, typing: true });
+        }
+      });
+
+      socket.on("typing_stop", (data) => {
+        const { receiverId, senderId } = data;
+        const receiverSocketId = onlineUsersMap.get(receiverId);
+        if (receiverSocketId) {
+          io.to(receiverSocketId).emit("user_typing", { senderId, typing: false });
+        }
+      });
+
+      // Mark messages as read
+      socket.on("mark_messages_read", async (data) => {
+        try {
+          const { userId, otherUserId } = data;
+          await collectionMessages.updateMany(
+            {
+              senderId: otherUserId,
+              receiverId: userId,
+              read: false
+            },
+            { $set: { read: true, readAt: new Date() } }
+          );
+
+          // Notify the other user that messages were read
+          const otherUserSocketId = onlineUsersMap.get(otherUserId);
+          if (otherUserSocketId) {
+            io.to(otherUserSocketId).emit("messages_read", { readerId: userId });
+          }
+        } catch (err) {
+          console.error("Error marking messages as read:", err);
         }
       });
 
@@ -1430,6 +1458,119 @@ app.post("/AiChat", async (req, res) => {
         }
       });
     });
+
+
+    // CHAT-RELATED API ENDPOINTS
+
+    // Get all users for chat
+    app.get("/chat/users", async (req, res) => {
+      try {
+        const users = await collectionUsers.find({}, {
+          projection: { _id: 1, uid: 1, displayName: 1, photoURL: 1, email: 1 }
+        }).toArray();
+        res.json(users);
+      } catch (err) {
+        console.error("Failed to fetch users:", err);
+        res.status(500).json({ error: "Failed to fetch users" });
+      }
+    });
+
+    // Get messages between two users - FIXED
+    app.get("/messages/:userId1/:userId2", async (req, res) => {
+      try {
+        const { userId1, userId2 } = req.params;
+        
+        const messages = await collectionMessages
+          .find({
+            $or: [
+              { senderId: userId1, receiverId: userId2 },
+              { senderId: userId2, receiverId: userId1 }
+            ]
+          })
+          .sort({ createdAt: 1 })
+          .toArray();
+
+        res.json(messages);
+      } catch (err) {
+        console.error("Failed to fetch messages:", err);
+        res.status(500).json({ error: "Failed to fetch messages" });
+      }
+    });
+
+    // Upload image for chat - FIXED
+    app.post("/upload/chat-image", upload.single("image"), async (req, res) => {
+      try {
+        if (!req.file) {
+          return res.status(400).json({ error: "No file uploaded" });
+        }
+        
+        const buffer = req.file.buffer;
+        const streamifier = require("streamifier");
+        
+        const result = await new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+            { 
+              folder: "chat_images",
+              resource_type: "image"
+            },
+            (error, result) => {
+              if (error) reject(error);
+              else resolve(result);
+            }
+          );
+          streamifier.createReadStream(buffer).pipe(stream);
+        });
+
+        res.json({ 
+          url: result.secure_url, 
+          public_id: result.public_id 
+        });
+      } catch (err) {
+        console.error("Upload error:", err);
+        res.status(500).json({ error: "Upload failed" });
+      }
+    });
+
+    // Get unread message count
+    app.get("/messages/:userId/unread-count", async (req, res) => {
+      try {
+        const { userId } = req.params;
+        
+        const count = await collectionMessages.countDocuments({
+          receiverId: userId,
+          read: false
+        });
+
+        res.json({ count });
+      } catch (err) {
+        console.error("Failed to get unread count:", err);
+        res.status(500).json({ error: "Failed to get unread count" });
+      }
+    });
+
+    // Mark messages as read via HTTP
+    app.put("/messages/read", async (req, res) => {
+      try {
+        const { userId, otherUserId } = req.body;
+        
+        await collectionMessages.updateMany(
+          {
+            senderId: otherUserId,
+            receiverId: userId,
+            read: false
+          },
+          { $set: { read: true, readAt: new Date() } }
+        );
+
+        res.json({ success: true });
+      } catch (err) {
+        console.error("Failed to mark messages as read:", err);
+        res.status(500).json({ error: "Failed to mark messages as read" });
+      }
+    });
+    //// Chat End
+
+    
   } catch (err) {
     console.error(err);
   }
