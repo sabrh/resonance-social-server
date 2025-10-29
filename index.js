@@ -58,71 +58,197 @@ async function run() {
     const collectionNotifications = client.db("createPostDB").collection("notifications"); 
     const collectionStory = client.db("createStoryDB").collection("story");
     const collectionMessages = client.db("createMessages").collection("messages");
+    
 
     // delete story auto
 
   //  await collectionStory.createIndex({ time: 1 }, { expireAfterSeconds: 86400 });
 
-    // NEW: Notifications collection
 
-   
 
-    // ============================
-    // Helper Functions
-    // ============================
+// All about Notification start(Rahat khan)..................................................
 
-    // Generate notification message
-    function generateNotificationMessage(type, senderName, commentText = "") {
-      switch (type) {
-        case 'like':
-          return `${senderName} liked your post`;
-        case 'comment':
-          return `${senderName} commented on your post`;
-        case 'reply':
-          return `${senderName} replied to your comment`;
-        default:
-          return `${senderName} interacted with your post`;
-      }
+// ============================
+// Helper Functions
+// ============================
+
+// Generate notification message - SINGLE VERSION (deleted duplicates)
+function generateNotificationMessage(type, senderName, commentText = "") {
+  switch (type) {
+    case 'like':
+      return `${senderName} liked your post`;
+    case 'comment':
+      return `${senderName} commented on your post`;
+    case 'reply':
+      return `${senderName} replied to your comment`;
+    case 'follow':
+      return `${senderName} started following you`;
+    case 'share':
+      return `${senderName} shared your post`;
+    default:
+      return `${senderName} interacted with your post`;
+  }
+}
+
+// Create notification function
+async function createNotification(notificationData) {
+  try {
+    const {
+      recipientId,
+      senderId,
+      senderName,
+      senderPhoto,
+      postId,
+      postText,
+      type,
+      commentText
+    } = notificationData;
+
+    // Don't create notification if user is interacting with their own post
+    if (recipientId === senderId) return;
+
+    const message = generateNotificationMessage(type, senderName, commentText);
+
+    const notification = {
+      recipientId,
+      senderId,
+      senderName,
+      senderPhoto,
+      postId,
+      postText: postText ? postText.substring(0, 100) : "",
+      type,
+      message,
+      commentText: commentText || "",
+      isRead: false,
+      createdAt: new Date()
+    };
+
+    await collectionNotifications.insertOne(notification);
+  } catch (err) {
+    console.error("Error creating notification:", err);
+  }
+}
+
+// ============================
+// NEW: Notifications APIs
+// ============================
+
+// Get notifications for a user
+app.get("/notifications/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const notifications = await collectionNotifications
+      .find({ recipientId: userId })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .toArray();
+
+    res.send(notifications);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ error: "Failed to fetch notifications" });
+  }
+});
+
+// Mark notification as read
+app.put("/notifications/:notificationId/read", async (req, res) => {
+  try {
+    const { notificationId } = req.params;
+
+    await collectionNotifications.updateOne(
+      { _id: new ObjectId(notificationId) },
+      { $set: { isRead: true } }
+    );
+
+    res.send({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ error: "Failed to mark notification as read" });
+  }
+});
+
+// Mark all notifications as read
+app.put("/notifications/:userId/read-all", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    await collectionNotifications.updateMany(
+      { recipientId: userId, isRead: false },
+      { $set: { isRead: true } }
+    );
+
+    res.send({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ error: "Failed to mark notifications as read" });
+  }
+});
+
+// Get unread notification count
+app.get("/notifications/:userId/unread-count", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const count = await collectionNotifications.countDocuments({
+      recipientId: userId,
+      isRead: false
+    });
+
+    res.send({ count });
+  } catch (err) {
+    console.error(err);
+    res.status(500).send({ error: "Failed to get unread count" });
+  }
+});
+
+// Create notification endpoint
+app.post("/notifications", async (req, res) => {
+  try {
+    const {
+      recipientId,
+      senderId,
+      senderName,
+      senderPhoto,
+      postId,
+      postText,
+      type,
+      commentText
+    } = req.body;
+
+    // Don't create notification if user is interacting with their own post
+    if (recipientId === senderId) {
+      return res.send({ success: true, message: "Self notification skipped" });
     }
 
-    // Create notification function
-    async function createNotification(notificationData) {
-      try {
-        const {
-          recipientId,
-          senderId,
-          senderName,
-          senderPhoto,
-          postId,
-          postText,
-          type,
-          commentText
-        } = notificationData;
+    const message = generateNotificationMessage(type, senderName, commentText);
 
-        // Don't create notification if user is interacting with their own post
-        if (recipientId === senderId) return;
+    const notification = {
+      recipientId,
+      senderId,
+      senderName,
+      senderPhoto,
+      postId,
+      postText: postText ? postText.substring(0, 100) : "",
+      type,
+      message,
+      commentText: commentText || "",
+      isRead: false,
+      createdAt: new Date()
+    };
 
-        const message = generateNotificationMessage(type, senderName, commentText);
+    const result = await collectionNotifications.insertOne(notification);
+    res.send({ success: true, notification: { ...notification, _id: result.insertedId } });
+  } catch (err) {
+    console.error("Error creating notification:", err);
+    res.status(500).send({ error: "Failed to create notification" });
+  }
+});
 
-        const notification = {
-          recipientId,
-          senderId,
-          senderName,
-          senderPhoto,
-          postId,
-          postText: postText ? postText.substring(0, 100) : "",
-          type,
-          message,
-          commentText: commentText || "",
-          isRead: false,
-          createdAt: new Date()
-        };
+// End the notification.............................................................................
 
-        await collectionNotifications.insertOne(notification);
-      } catch (err) {
-        console.error("Error creating notification:", err);
-      }
-    }
+
+
 
     // ============================
     // Users
@@ -452,79 +578,7 @@ async function run() {
       }
     });
 
-    // ============================
-    // NEW: Notifications APIs
-    // ============================
-
-    // Get notifications for a user
-    app.get("/notifications/:userId", async (req, res) => {
-      try {
-        const { userId } = req.params;
-
-        const notifications = await collectionNotifications
-          .find({ recipientId: userId })
-          .sort({ createdAt: -1 })
-          .limit(50)
-          .toArray();
-
-        res.send(notifications);
-      } catch (err) {
-        console.error(err);
-        res.status(500).send({ error: "Failed to fetch notifications" });
-      }
-    });
-
-    // Mark notification as read
-    app.put("/notifications/:notificationId/read", async (req, res) => {
-      try {
-        const { notificationId } = req.params;
-
-        await collectionNotifications.updateOne(
-          { _id: new ObjectId(notificationId) },
-          { $set: { isRead: true } }
-        );
-
-        res.send({ success: true });
-      } catch (err) {
-        console.error(err);
-        res.status(500).send({ error: "Failed to mark notification as read" });
-      }
-    });
-
-    // Mark all notifications as read
-    app.put("/notifications/:userId/read-all", async (req, res) => {
-      try {
-        const { userId } = req.params;
-
-        await collectionNotifications.updateMany(
-          { recipientId: userId, isRead: false },
-          { $set: { isRead: true } }
-        );
-
-        res.send({ success: true });
-      } catch (err) {
-        console.error(err);
-        res.status(500).send({ error: "Failed to mark notifications as read" });
-      }
-    });
-
-    // Get unread notification count
-    app.get("/notifications/:userId/unread-count", async (req, res) => {
-      try {
-        const { userId } = req.params;
-
-        const count = await collectionNotifications.countDocuments({
-          recipientId: userId,
-          isRead: false
-        });
-
-        res.send({ count });
-      } catch (err) {
-        console.error(err);
-        res.status(500).send({ error: "Failed to get unread count" });
-      }
-    });
-
+    
     // ============================
     // Posts
     // ============================
@@ -605,8 +659,12 @@ async function run() {
     app.put("/socialPost/:id/react", async (req, res) => {
       const postId = req.params.id;
       const { userId, reactionType, senderName, senderPhoto } = req.body;
-
+   
       try {
+        if (!ObjectId.isValid(postId)) {
+          return res.status(400).send({ error: "Invalid post ID" });
+        }
+
         if (!ObjectId.isValid(postId)) {
           return res.status(400).send({ error: "Invalid post ID" });
         }
@@ -618,6 +676,7 @@ async function run() {
 
         if (!post.reactions) post.reactions = [];
 
+        
         // check if user already reacted
         const existingIndex = post.reactions.findIndex(
           (r) => r.userId === userId
@@ -659,8 +718,13 @@ async function run() {
           reactions: post.reactions,
           userReaction,
           reactionsCount: post.reactions.length,
+          reactions: post.reactions,
+          userReaction,
+          reactionsCount: post.reactions.length,
         });
       } catch (err) {
+        console.error("Error in /react route:", err);
+        res.status(500).send({ error: "Internal server error" });
         console.error("Error in /react route:", err);
         res.status(500).send({ error: "Internal server error" });
       }
@@ -683,6 +747,7 @@ async function run() {
           .find({ uid: { $in: userIds } })
           .project({ uid: 1, displayName: 1, photoURL: 1 })
           .toArray();
+
 
         // user info এর সাথে reaction type merge করো
         const result = reactions.map((r) => {
